@@ -13,9 +13,6 @@ if (connectionString.startsWith("DATABASE_URL=")) {
   connectionString = connectionString.substring("DATABASE_URL=".length);
 }
 
-// Percent-encode the @ symbol in password if present unencoded
-connectionString = connectionString.replace("postgres:Shouma@_3_7_3", "postgres:Shouma%40_3_7_3");
-
 // Convert numeric types to float
 types.setTypeParser(1700, (val) => parseFloat(val));
 
