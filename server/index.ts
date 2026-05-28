@@ -3,6 +3,8 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import path from "path";
+import { migrate } from "drizzle-orm/node-postgres/migrator";
+import { db, pool } from "./db";
 
 const app = express();
 const httpServer = createServer(app);
@@ -66,6 +68,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Run migrations on startup
+  try {
+    log("Running database migrations...");
+    await migrate(db, { migrationsFolder: "./migrations" });
+    log("✅ Database migrations completed successfully!");
+  } catch (error) {
+    log(`⚠️ Migration warning: ${error instanceof Error ? error.message : String(error)}`);
+    // Don't exit on migration error, continue startup
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
