@@ -9,9 +9,9 @@ interface LoginProps {
 }
 
 export default function Login({ onLoginSuccess, onApplyClick, onAdminClick }: LoginProps) {
-  const [email, setEmail] = useState('hamadalhabsi208@gmail.com');
-  const [password, setPassword] = useState('shouma2026');
-  const [programmerName, setProgrammerName] = useState('حمد الحبسي');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [programmerName, setProgrammerName] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -140,7 +140,7 @@ export default function Login({ onLoginSuccess, onApplyClick, onAdminClick }: Lo
           <div className="bg-amber-500/5 border border-amber-500/20 p-3.5 rounded-2xl mb-4">
             <div className="flex items-center gap-1 text-xs text-amber-400 font-bold mb-1.5">
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>اسم المبرمج (لعرضه في جملة الترحيب اللامعة):</span>
+              <span>إسم المرشد</span>
             </div>
             <input
               id="programmer-name-input"
