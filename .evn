@@ -1,0 +1,3 @@
+DATABASE_URL=postgresql://postgres:Shouma@_3_7_3@db.fruiddsksjpyvabibjgk.supabase.co:5432/postgres
+OPENAI_API_KEY=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
+MEDIA_STORAGE_API_KEY=fr8RgP443tUZInXLjnaWIl54eo0
