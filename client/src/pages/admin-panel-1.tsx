@@ -6,7 +6,7 @@ import {
   Film, Image as ImageIcon, UploadCloud, Copy, FileVideo, Eye, RefreshCw, 
   Megaphone, Building, ShieldAlert, CheckCircle2, ChevronRight, ExternalLink,
   DollarSign, FileText, Download, CheckCircle, AlertTriangle, Flame, Map, CreditCard,
-  Percent, Activity, TrendingUp, Mountain
+  Percent, Activity, TrendingUp, Mountain, PlaneTakeoff
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { 
@@ -76,9 +76,9 @@ export default function AdminPanelOne() {
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
   
-  // Tab states: 'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities'
+  // Tab states: 'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips'
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities'
+    'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips'
   >('dashboard');
 
   // Loaded database items
@@ -90,6 +90,7 @@ export default function AdminPanelOne() {
   const [restaurants, setRestaurants] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [trips, setTrips] = useState<TripBooking[]>([]);
+  const [groupTrips, setGroupTrips] = useState<any[]>([]);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [mediaAssets, setMediaAssets] = useState<any[]>([]);
   const [office, setOffice] = useState<OfficeConfig>({
@@ -550,13 +551,15 @@ export default function AdminPanelOne() {
       const loadHotelBookings = safeFetchJson('/api/hotel-bookings');
       const loadHikingTrips = safeFetchJson('/api/hiking-trips');
       const loadHikingBookings = safeFetchJson('/api/hiking-bookings');
+      const loadGroupTrips = safeFetchJson('/api/group-trips');
 
-      const [apps, off, trps, tckts, gds, latestAnn, attrs, htls, rsts, acts, media, himam, drob, hpay, hBookings, hTrips, hBookingsData] = await Promise.all([
+      const [apps, off, trps, tckts, gds, latestAnn, attrs, htls, rsts, acts, media, himam, drob, hpay, hBookings, hTrips, hBookingsData, gTripsData] = await Promise.all([
         loadApplications, loadOffice, loadTrips, loadTickets, loadGuides, loadAnnouncements, loadAttractions, loadHotels, loadRestaurants, loadActivities, loadMedia,
-        loadHimam, loadDrob, loadHPay, loadHotelBookings, loadHikingTrips, loadHikingBookings
+        loadHimam, loadDrob, loadHPay, loadHotelBookings, loadHikingTrips, loadHikingBookings, loadGroupTrips
       ]);
 
       if (Array.isArray(acts)) setActivities(acts);
+      if (Array.isArray(gTripsData)) setGroupTrips(gTripsData);
 
       if (Array.isArray(himam)) setHimamPlaces(himam);
       if (Array.isArray(drob)) setDrobGems(drob);
@@ -1632,6 +1635,7 @@ export default function AdminPanelOne() {
             { id: 'attractions', label: 'تنظيم المعالم السياحية', icon: Landmark, count: totalAttractions },
             { id: 'accommodations', label: 'الفنادق والمطاعم', icon: Building },
             { id: 'trips', label: 'إدراج وتعميم الرحلات', icon: Compass, count: activeTripsCount },
+            { id: 'groupTrips', label: 'طلبات الرحلات الجماعية', icon: PlaneTakeoff, count: groupTrips.length },
             { id: 'activities', label: 'إدارة ألعاب وأنشطة المغامرة', icon: Activity, count: activities.length },
             { id: 'himam', label: 'إدارة همم شومة', icon: Flame },
             { id: 'drob', label: 'إدارة دروب شومة', icon: Map },
@@ -3065,7 +3069,8 @@ export default function AdminPanelOne() {
                           value={hotelEmail}
                           onChange={(e) => setHotelEmail(e.target.value)}
                           placeholder="hotel@shouma.com"
-                          className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-xs focus:outline-none text-left"
+                          className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                          style={{ color: '#ffffff', backgroundColor: '#020617' }}
                           dir="ltr"
                           required={accType === 'hotel'}
                         />
@@ -3078,7 +3083,8 @@ export default function AdminPanelOne() {
                           value={hotelPassword}
                           onChange={(e) => setHotelPassword(e.target.value)}
                           placeholder="كلمة مرور الفندق"
-                          className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-xs focus:outline-none text-left"
+                          className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                          style={{ color: '#ffffff', backgroundColor: '#020617' }}
                           dir="ltr"
                           required={accType === 'hotel'}
                         />
@@ -3371,6 +3377,122 @@ export default function AdminPanelOne() {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB: GROUP TRIPS INQUIRIES & MANAGEMENT */}
+        {activeTab === 'groupTrips' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/40 p-5 rounded-3xl border border-slate-800">
+              <div>
+                <h2 className="text-md font-bold text-white flex items-center gap-2">
+                  <PlaneTakeoff className="w-5 h-5 text-amber-500 animate-pulse" />
+                  إدارة طلبات ومسارات المجموعات والرحلات الجماعية
+                </h2>
+                <p className="text-slate-400 text-xs mt-1">تتبع رحلات زوار عمان المجموعات فوق 8 أشخاص مع مجانية صغار دون 7 سنوات</p>
+              </div>
+              <a 
+                href="/trips-admin" 
+                target="_blank" 
+                className="px-4 py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-slate-950 font-black rounded-xl text-xs transition-all flex items-center gap-1.5 shadow-lg active:scale-95 text-center shrink-0 cursor-pointer"
+              >
+                <ExternalLink className="w-4 h-4" />
+                فتح لوحة الإدارة المستقلة للرحلات الجماعية 🚀
+              </a>
+            </div>
+
+            {/* Inclusions Policy Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl flex items-start gap-3">
+                <Users className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-slate-300 leading-relaxed font-sans">
+                  <p className="font-bold text-white text-xs mb-1">الحد الأدنى للمجموعات:</p>
+                  <span>أقل نصاب مسموح لتفعيل البرنامج الجماعي هو 8 أشخاص راشدين.</span>
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 p-4.5 rounded-2xl flex items-start gap-3">
+                <Flame className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="text-xs text-slate-300 leading-relaxed font-sans">
+                  <p className="font-bold text-white text-xs mb-1">سياسة الأطفال الصغار:</p>
+                  <span>الأطفال دون سن الـ 7 سنوات معفيين تماماً من أي تكاليف ومجاناً بالكامل.</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden">
+              <div className="p-5 border-b border-slate-850 flex items-center justify-between">
+                <h3 className="font-black text-xs text-white">جدول الطلبات السياحية الجماعية النشطة</h3>
+                <span className="text-[10px] text-slate-400 font-mono">طول الكتالوج: {groupTrips.length} طلب</span>
+              </div>
+
+              {groupTrips.length === 0 ? (
+                <div className="p-12 text-center">
+                  <Compass className="w-10 h-10 text-slate-700 mx-auto mb-2 animate-bounce" />
+                  <p className="text-slate-500 text-xs">لا تتوفر طلبات رحلات جماعية مسجلة بالخادم حالياً.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-right font-sans">
+                    <thead>
+                      <tr className="bg-slate-950/60 text-slate-400 border-b border-slate-800">
+                        <th className="px-5 py-3.5 font-bold">رقم الطلب / بلد المنشأ</th>
+                        <th className="px-5 py-3.5 font-bold">العدد الإجمالي</th>
+                        <th className="px-5 py-3.5 font-bold">الأيام المطلوبة</th>
+                        <th className="px-5 py-3.5 font-bold">تاريخ الوصول والوجهات المفضلة</th>
+                        <th className="px-5 py-3.5 font-bold text-center">حذف</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {groupTrips.map((req) => (
+                        <tr key={req.id} className="hover:bg-slate-950/20 transition-all">
+                          <td className="px-5 py-4 space-y-1">
+                            <span className="font-mono text-amber-500 font-bold block">#STG-{req.id}</span>
+                            <span className="text-[10px] text-slate-400 flex items-center gap-1">
+                              <Globe className="w-3.5 h-3.5 text-slate-500" />
+                              {req.country}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 font-bold text-white text-sm">
+                            {req.numberOfPeople} أشخاص
+                          </td>
+                          <td className="px-5 py-4 font-semibold text-slate-300">
+                            {req.numberOfDays} أيام جولة
+                          </td>
+                          <td className="px-5 py-4 space-y-1">
+                            <span className="text-slate-400 font-mono block">{req.arrivalDate}</span>
+                            <span className="text-[10px] text-indigo-400 font-bold">
+                              {req.destinationPreference === "single" ? `المحافظة الموفرة: ${req.selectedGovernorate || "مسقط"}` : "محافظات عمان متعددة"}
+                            </span>
+                          </td>
+                          <td className="px-5 py-4 text-center">
+                            <button
+                              onClick={async () => {
+                                if (!confirm("هل أنت متأكد من رغبتك في حذف هذا الطلب الجماعي؟")) return;
+                                try {
+                                  const res = await fetch(`/api/group-trips/${req.id}`, { method: "DELETE" });
+                                  if (res.ok) {
+                                    setGroupTrips(prev => prev.filter(item => item.id !== req.id));
+                                    triggerNotification("تم حذف طلب الرحلة المجموعات بنجاح!");
+                                  } else {
+                                    triggerNotification("حدث خطأ أثناء محاولة الحذف من الخادم", true);
+                                  }
+                                } catch (error) {
+                                  triggerNotification("فشل الاتصال بالخادم لحذف الطلب", true);
+                                }
+                              }}
+                              className="p-1 px-2 text-red-400 bg-red-950/20 hover:bg-red-900/30 border border-red-500/20 rounded-lg transition-all cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>

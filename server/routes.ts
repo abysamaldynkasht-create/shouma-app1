@@ -546,6 +546,20 @@ Important rules:
     }
   });
 
+  app.delete("/api/group-trips/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (isNaN(id)) {
+        return res.status(400).json({ message: "المعرف غير صحيح" });
+      }
+      await storage.deleteGroupTripRequest(id);
+      return res.json({ success: true, message: "تم حذف الطلب بنجاح" });
+    } catch (error) {
+      console.error("Delete group trip error:", error);
+      return res.status(500).json({ message: "حدث خطأ أثناء حذف الطلب" });
+    }
+  });
+
   // Tour Request Endpoints
   app.post("/api/tour-requests", async (req, res) => {
     try {

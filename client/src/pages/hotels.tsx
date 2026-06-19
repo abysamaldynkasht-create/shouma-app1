@@ -128,15 +128,6 @@ export default function HotelsPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setLocation("/hotels-admin")}
-                className="text-2xs sm:text-xs font-bold border-emerald-500/20 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5 hover:bg-emerald-500/10 gap-1 h-8 px-2 sm:px-3 rounded-xl transition-all"
-              >
-                <Building2 className="w-3.5 h-3.5" />
-                <span>بوابة الفنادق</span>
-              </Button>
               <ThemeToggle />
               <LanguageSwitcher />
             </div>

@@ -87,7 +87,7 @@ const countriesAr: Record<string, string> = {
 };
 
 const formSchema = z.object({
-  numberOfPeople: z.coerce.number().min(1, "minPeople"),
+  numberOfPeople: z.coerce.number().min(8, "الحد الأدنى للرحلات الجماعية هو 8 أشخاص (والأطفال دون سن الـ 7 سنوات مجاناً!)"),
   numberOfDays: z.coerce.number().min(1, "minDays"),
   preferences: z.array(z.string()).min(1, "fieldRequired"),
   country: z.string().min(1, "fieldRequired"),
@@ -263,14 +263,19 @@ export default function GroupTripsPage() {
                         <Input
                           data-testid="input-number-of-people"
                           type="number"
-                          min="1"
+                          min="8"
                           max="500"
-                          placeholder="1"
+                          placeholder="8"
                           {...field}
                           value={field.value ?? ""}
                           onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : undefined)}
                         />
                       </FormControl>
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 font-sans leading-normal mt-1.5 text-right space-y-0.5" dir="rtl">
+                        <span>💡 الحد الأدنى للرحلات الجماعية هو 8 أشخاص.</span>
+                        <br />
+                        <span>👶 الأطفال دون سن الـ 7 سنوات مجاناً بالكامل ولا يُحتسبون من ضمن الحد الأدنى للعدد.</span>
+                      </p>
                       <FormMessage>{form.formState.errors.numberOfPeople && t(form.formState.errors.numberOfPeople.message || "fieldRequired")}</FormMessage>
                     </FormItem>
                   )}

@@ -32,6 +32,7 @@ import OfflineMapPage from "@/pages/offline-map";
 import GroupTripsPage from "@/pages/group-trips";
 import HimamShoumaPage from "@/pages/himam-shouma";
 import HotelPortalPage from "@/pages/hotel-portal";
+import TripsAdminPage from "@/pages/trips-admin";
 
 import AccessibilityAssistant from "@/components/AccessibilityAssistant";
 import CustomerService from "@/components/CustomerService";
@@ -66,6 +67,7 @@ function Router() {
       <Route path="/group-trips" component={GroupTripsPage} />
       <Route path="/himam-shouma" component={HimamShoumaPage} />
       <Route path="/hotels-admin" component={HotelPortalPage} />
+      <Route path="/trips-admin" component={TripsAdminPage} />
 
       <Route component={NotFound} />
     </Switch>

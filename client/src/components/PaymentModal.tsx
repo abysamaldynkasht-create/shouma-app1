@@ -144,7 +144,7 @@ export default function PaymentModal({
   if (isSuccess) {
     return (
       <Dialog open={open} onOpenChange={handleClose}>
-        <DialogContent className="sm:max-w-md dir-rtl">
+        <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto dir-rtl">
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <div className="w-20 h-20 rounded-full bg-emerald-500/10 flex items-center justify-center mb-6">
               <CheckCircle2 className="w-12 h-12 text-emerald-600 dark:text-emerald-400" />
@@ -182,7 +182,7 @@ export default function PaymentModal({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg dir-rtl">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto dir-rtl">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold text-center text-foreground flex items-center justify-center gap-2">
             <CreditCard className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />

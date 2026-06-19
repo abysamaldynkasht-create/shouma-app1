@@ -213,7 +213,8 @@ export default function HotelPortalPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="hotel@shouma.com"
                     required
-                    className="w-full bg-slate-950 border-slate-800 rounded-xl pl-3 pr-10 text-xs text-slate-200 text-left placeholder:text-slate-600"
+                    className="w-full border-slate-800 rounded-xl pl-3 pr-10 text-xs text-left placeholder:text-slate-600"
+                    style={{ color: '#ffffff', backgroundColor: '#020617' }}
                     dir="ltr"
                   />
                   <Mail className="w-4 h-4 text-slate-500 absolute right-3.5 top-1/2 -translate-y-1/2" />
@@ -232,7 +233,8 @@ export default function HotelPortalPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
                     required
-                    className="w-full bg-slate-950 border-slate-800 rounded-xl pl-3 pr-10 text-xs text-slate-200 text-left placeholder:text-slate-600"
+                    className="w-full border-slate-800 rounded-xl pl-3 pr-10 text-xs text-left placeholder:text-slate-600"
+                    style={{ color: '#ffffff', backgroundColor: '#020617' }}
                     dir="ltr"
                   />
                   <Lock className="w-4 h-4 text-slate-500 absolute right-3.5 top-1/2 -translate-y-1/2" />

@@ -23,6 +23,7 @@ export interface IStorage {
   createRestaurantReview(review: InsertRestaurantReview): Promise<RestaurantReview>;
   createGroupTripRequest(request: InsertGroupTripRequest): Promise<GroupTripRequest>;
   getGroupTripRequests(): Promise<GroupTripRequest[]>;
+  deleteGroupTripRequest(id: number): Promise<void>;
   createTourRequest(request: InsertTourRequest): Promise<TourRequest>;
   getTourRequests(guideId?: number): Promise<TourRequest[]>;
   getTourRequestById(id: number): Promise<TourRequest | undefined>;
@@ -148,6 +149,12 @@ export class DatabaseStorage implements IStorage {
       .select()
       .from(groupTripRequests)
       .orderBy(desc(groupTripRequests.createdAt));
+  }
+
+  async deleteGroupTripRequest(id: number): Promise<void> {
+    await db
+      .delete(groupTripRequests)
+      .where(eq(groupTripRequests.id, id));
   }
 
   async createTourRequest(request: InsertTourRequest): Promise<TourRequest> {
@@ -731,6 +738,10 @@ export class MemStorage implements IStorage {
   async getGroupTripRequests(): Promise<GroupTripRequest[]> {
     return Array.from(this.groupTripRequests.values())
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }
+
+  async deleteGroupTripRequest(id: number): Promise<void> {
+    this.groupTripRequests.delete(id);
   }
 
   async createTourRequest(request: InsertTourRequest): Promise<TourRequest> {
