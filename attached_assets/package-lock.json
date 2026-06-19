@@ -1,0 +1,6 @@
+{
+  "name": "مرشدي شومة",
+  "description": "منصة التقديم ولوحة التحكم لمرشدي شومة السياحيين",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
