@@ -191,6 +191,7 @@ async function createMissingTables() {
         "name" text NOT NULL,
         "name_ar" text NOT NULL,
         "description" text NOT NULL,
+        "description_en" text DEFAULT '',
         "governorate" text NOT NULL,
         "governorate_id" text NOT NULL,
         "wilayat" text NOT NULL,
@@ -220,6 +221,11 @@ async function createMissingTables() {
         "phone" text NOT NULL,
         "map_url" text,
         "amenities" text[] NOT NULL DEFAULT '{}'::text[],
+        "split_shouma_pct" integer DEFAULT 15,
+        "split_hotel_pct" integer DEFAULT 85,
+        "email" text,
+        "password" text,
+        "status" text NOT NULL DEFAULT 'approved',
         "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -284,6 +290,35 @@ async function createMissingTables() {
     `);
     console.log("✅ Table 'db_activities' verified/created successfully!");
 
+    // 13. Create db_portal_accounts if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_portal_accounts" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "portal_type" text NOT NULL,
+        "portal_name" text NOT NULL,
+        "email" text NOT NULL,
+        "password" text NOT NULL,
+        "name" text NOT NULL,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Table 'db_portal_accounts' verified/created successfully!");
+
+    // 14. Create db_hotel_staff if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_hotel_staff" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "hotel_id" integer NOT NULL,
+        "username" text NOT NULL,
+        "password" text NOT NULL,
+        "role" text NOT NULL DEFAULT 'receptionist',
+        "name" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Table 'db_hotel_staff' verified/created successfully!");
+
     // Seed default activities if empty
     const checkActCount = await pool.query(`SELECT COUNT(*) FROM "db_activities"`);
     if (parseInt(checkActCount.rows[0].count, 10) === 0) {
@@ -320,16 +355,20 @@ async function createMissingTables() {
     await pool.query(`ALTER TABLE "db_tour_guides" ADD COLUMN IF NOT EXISTS "additional_images" text DEFAULT '';`);
     await pool.query(`ALTER TABLE "db_tour_guides" ADD COLUMN IF NOT EXISTS "bank_account" text DEFAULT '';`);
 
-    // 2. db_attractions: additional_images, tags
+    // 2. db_attractions: additional_images, tags, description_en
     await pool.query(`ALTER TABLE "db_attractions" ADD COLUMN IF NOT EXISTS "additional_images" text DEFAULT '';`);
     await pool.query(`ALTER TABLE "db_attractions" ADD COLUMN IF NOT EXISTS "tags" text[] NOT NULL DEFAULT '{}'::text[];`);
+    await pool.query(`ALTER TABLE "db_attractions" ADD COLUMN IF NOT EXISTS "description_en" text DEFAULT '';`);
 
-    // 3. db_hotels: additional_images, bank_account, amenities, email, password
+    // 3. db_hotels: additional_images, bank_account, amenities, email, password, status, split percentages
     await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "additional_images" text DEFAULT '';`);
     await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "bank_account" text DEFAULT '';`);
     await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "amenities" text[] NOT NULL DEFAULT '{}'::text[];`);
     await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "email" text;`);
     await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "password" text;`);
+    await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "status" text NOT NULL DEFAULT 'approved';`);
+    await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "split_shouma_pct" integer DEFAULT 15;`);
+    await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "split_hotel_pct" integer DEFAULT 85;`);
 
     // 4. db_restaurants: additional_images
     await pool.query(`ALTER TABLE "db_restaurants" ADD COLUMN IF NOT EXISTS "additional_images" text DEFAULT '';`);
@@ -353,6 +392,21 @@ async function createMissingTables() {
     `);
 
     console.log("✅ Custom database schema additions (email, password, multiple images) verified successfully!");
+
+    // Create user_settings table if it doesn't exist
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "user_settings" (
+        "id" serial PRIMARY KEY,
+        "user_id" varchar NOT NULL UNIQUE REFERENCES "users"("id") ON DELETE CASCADE,
+        "currency" varchar(3) NOT NULL DEFAULT 'OMR',
+        "gps_enabled" boolean NOT NULL DEFAULT true,
+        "distance_unit" varchar(2) NOT NULL DEFAULT 'km',
+        "booking_notifications" boolean NOT NULL DEFAULT true,
+        "promo_notifications" boolean NOT NULL DEFAULT true,
+        "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log("✅ Verified 'user_settings' table exists!");
 
     console.log("✅ All required tables verified successfully in PostgreSQL database!");
   } catch (error) {

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { categories } from "@/lib/categories";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
+import { motion, AnimatePresence } from "motion/react";
 import { 
   MapPin, 
   Building2, 
@@ -19,25 +20,39 @@ import {
   Gem,
   Map,
   Users,
-  Accessibility
+  Accessibility,
+  Code2,
+  ChevronLeft,
+  ChevronRight,
+  Settings,
+  Shield,
+  Calendar,
+  Moon,
+  Sun,
+  Coins,
+  Bell,
+  Save,
+  Check,
+  Loader2,
+  Briefcase
 } from "lucide-react";
-import shoumaLogo from "@assets/شومة_1768320219408.jpg";
+import shoumaLogo from "@/assets/shouma-logo.png";
 import { Input } from "@/components/ui/input";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
-import ThemeToggle from "@/components/ThemeToggle";
+import ThemeToggle, { useTheme } from "@/components/ThemeToggle";
 
 // Import Oman-specific images for categories
-import nizwaFortImg from "@/assets/nizwa-fort.png";
+import nizwaFortImg from "@/assets/nizwa-souq.png";
 import sixSensesHotelImg from "@/assets/six-senses-hotel.png";
 import baitAlmadghootImg from "@/assets/bait-almadghoot.png";
 import jebelAkhdarImg from "@/assets/jebel-akhdar.png";
-import mutrahSouqImg from "@/assets/mutrah-souq.png";
+import mutrahSouqImg from "@/assets/mutrah-fort.png";
 import qurmBeachImg from "@/assets/qurum-beach.png";
 import misfatAbriyyinImg from "@/assets/misfat-abriyyin.png";
 import wadiDarbatImg from "@/assets/wadi-darbat.png";
 import mughsailBeachImg from "@/assets/mughsail-beach.png";
 import muscatNightsImg from "@/assets/muscat-nights.png";
-import injazEventImg from "@assets/image_1772574646292.png";
+const injazEventImg = "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=800";
 
 const iconMap: Record<string, React.ReactNode> = {
   MapPin: <MapPin className="w-8 h-8" />,
@@ -60,6 +75,82 @@ export default function HomePage() {
   const [, setLocation] = useLocation();
   const { t, isRTL } = useLanguage();
   const username = localStorage.getItem('shouma-username');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const { isDark, toggle: toggleTheme } = useTheme();
+
+  // User Preferences State and Queries
+  const [isPrefsOpen, setIsPrefsOpen] = useState(false);
+  const [localPrefs, setLocalPrefs] = useState<{
+    currency: "OMR" | "USD" | "AED";
+    gpsEnabled: boolean;
+    distanceUnit: "km" | "mi";
+    bookingNotifications: boolean;
+    promoNotifications: boolean;
+  } | null>(null);
+  const [isSavingPrefs, setIsSavingPrefs] = useState(false);
+  const [prefsSuccess, setPrefsSuccess] = useState(false);
+
+  // Fetch User Settings
+  const { data: userPrefs, refetch: refetchPrefs } = useQuery<any>({
+    queryKey: ["/api/user-settings"],
+    queryFn: async () => {
+      const uName = localStorage.getItem('shouma-username') || 'guest';
+      const resp = await fetch("/api/user-settings", {
+        headers: {
+          "x-username": encodeURIComponent(uName),
+        }
+      });
+      if (!resp.ok) {
+        throw new Error("Failed to fetch settings");
+      }
+      return resp.json();
+    }
+  });
+
+  // Keep local preferences state in sync when loaded or when modal is opened
+  useEffect(() => {
+    if (userPrefs) {
+      setLocalPrefs({
+        currency: userPrefs.currency as "OMR" | "USD" | "AED",
+        gpsEnabled: userPrefs.gpsEnabled,
+        distanceUnit: userPrefs.distanceUnit as "km" | "mi",
+        bookingNotifications: userPrefs.bookingNotifications,
+        promoNotifications: userPrefs.promoNotifications,
+      });
+    }
+  }, [userPrefs, isPrefsOpen]);
+
+  const handleSavePrefs = async () => {
+    if (!localPrefs) return;
+    setIsSavingPrefs(true);
+    setPrefsSuccess(false);
+    try {
+      const uName = localStorage.getItem('shouma-username') || 'guest';
+      const resp = await fetch("/api/user-settings", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "x-username": encodeURIComponent(uName),
+        },
+        body: JSON.stringify(localPrefs),
+      });
+
+      if (resp.ok) {
+        await refetchPrefs();
+        setPrefsSuccess(true);
+        setTimeout(() => {
+          setPrefsSuccess(false);
+          setIsPrefsOpen(false);
+        }, 1500);
+      } else {
+        console.error("Failed to save user preferences");
+      }
+    } catch (err) {
+      console.error("Error saving user preferences:", err);
+    } finally {
+      setIsSavingPrefs(false);
+    }
+  };
 
   // Fetch the latest active announcement compiled by administrators
   const { data: latestAnn } = useQuery<any>({
@@ -71,7 +162,61 @@ export default function HomePage() {
     }
   });
 
+  // Fetch active marketing ads
+  const { data: ads = [] } = useQuery<any[]>({
+    queryKey: ["/api/marketing-ads"],
+    queryFn: async () => {
+      const resp = await fetch("/api/marketing-ads");
+      if (!resp.ok) return [];
+      return resp.json();
+    }
+  });
+
+  const [currentAdIndex, setCurrentAdIndex] = useState(0);
+
+  useEffect(() => {
+    if (ads.length <= 1) return;
+    const interval = setInterval(() => {
+      setCurrentAdIndex((prev) => (prev + 1) % ads.length);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [ads]);
+
+  const handleNextAd = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (ads.length > 0) {
+      setCurrentAdIndex((prev) => (prev + 1) % ads.length);
+    }
+  };
+
+  const handlePrevAd = (e?: React.MouseEvent) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if (ads.length > 0) {
+      setCurrentAdIndex((prev) => (prev - 1 + ads.length) % ads.length);
+    }
+  };
+
   const [announcement, setAnnouncement] = useState<any | null>(null);
+  const [hasActiveItinerary, setHasActiveItinerary] = useState(false);
+
+  useEffect(() => {
+    try {
+      const active = localStorage.getItem("shouma_active_itinerary");
+      const saved = localStorage.getItem("shouma_saved_itineraries");
+      const hasSaved = saved ? JSON.parse(saved).length > 0 : false;
+      if (active || hasSaved) {
+        setHasActiveItinerary(true);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   useEffect(() => {
     if (latestAnn && latestAnn.id) {
@@ -135,7 +280,7 @@ export default function HomePage() {
               <img 
                 src={shoumaLogo} 
                 alt="شومة" 
-                className="h-12 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-11 w-auto object-contain drop-shadow-sm rounded-md"
                 data-testid="logo-icon"
               />
               {username && (
@@ -146,16 +291,30 @@ export default function HomePage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <ThemeToggle />
               <LanguageSwitcher />
-              <Button 
-                variant="ghost" 
+
+              {/* My Bookings & Itineraries button */}
+              <Button
+                variant="ghost"
                 size="icon"
-                data-testid="button-logout"
-                onClick={handleLogout}
-                className="text-muted-foreground hover:text-foreground"
+                onClick={() => setLocation("/my-bookings")}
+                className="relative text-emerald-600 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all duration-300"
+                title={isRTL ? "حقيبتي: حجوزاتي وجداولي المحفوظة" : "My Bookings & Saved Itineraries"}
+                data-testid="button-my-bookings"
               >
-                <LogOut className="w-5 h-5" />
+                <Briefcase className="w-5 h-5 hover:scale-110 transition-transform duration-300" />
+              </Button>
+
+              {/* Settings button redirects to dedicated page */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setLocation("/settings")}
+                className="relative text-muted-foreground hover:text-foreground transition-all duration-300"
+                title={isRTL ? "الإعدادات والتفضيلات" : "Settings & Preferences"}
+                data-testid="button-settings"
+              >
+                <Settings className="w-5 h-5 hover:rotate-45 transition-transform duration-300" />
               </Button>
             </div>
           </div>
@@ -190,55 +349,149 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Featured Event Banner */}
-      <section className="py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-r from-amber-900/20 via-amber-800/10 to-amber-900/20">
-        <div className="max-w-7xl mx-auto">
-          <a
-            href="https://maps.app.goo.gl/2SFBSzDjqRn9sY216"
-            target="_blank"
-            rel="noopener noreferrer"
-            data-testid="banner-featured-event"
-            className="w-full block group relative overflow-hidden rounded-2xl shadow-2xl hover:shadow-3xl transition-all duration-500 hover:-translate-y-1"
-          >
-            <div className="relative h-48 sm:h-64 md:h-72">
-              <div 
-                className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
-                style={{ backgroundImage: `url('${injazEventImg}')` }}
-              />
-              <div className="absolute inset-0 bg-gradient-to-r from-black/80 via-black/50 to-transparent" />
-              
-              {/* Animated sparkles effect */}
-              <div className="absolute top-4 right-4 flex items-center gap-2">
-                <span className="px-3 py-1.5 bg-amber-500/90 backdrop-blur-sm rounded-full text-white text-sm font-bold animate-pulse">
-                  {t('nowOpen') || 'الآن'}
-                </span>
-              </div>
-              
-              <div className={`absolute inset-0 flex flex-col justify-center p-6 sm:p-8 md:p-10 ${isRTL ? 'text-right items-end' : 'text-left items-start'}`}>
-                <div className="flex items-center gap-3 mb-3">
-                  <Sparkles className="w-6 h-6 sm:w-8 sm:h-8 text-amber-400 animate-pulse" />
-                  <span className="text-amber-400 text-sm sm:text-base font-semibold">
-                    {t('featuredEvent') || 'الحدث المميز'}
-                  </span>
-                </div>
-                
-                <h2 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white mb-2 drop-shadow-lg">
-                  {t('featuredEventTitle') || 'معرض الشركات الطلابية - إنجاز عُمان'}
-                </h2>
-                
-                <p className="text-white/90 text-sm sm:text-base max-w-md mb-4 drop-shadow">
-                  {t('featuredEventDesc') || '٥ - ٧ مارس | ٧:٣٠ مساءً - ١٢:٠٠ صباحاً'}
-                </p>
-                
-                <div className="flex items-center gap-4 text-white/80 text-sm">
-                  <span className="flex items-center gap-1.5">
-                    <MapPin className="w-4 h-4" />
-                    {t('featuredEventLocation') || 'مركز عُمان للمعارض والمؤتمرات'}
-                  </span>
+      {/* Dynamic Scrolling and Interactive Ads Carousel */}
+      <section className="py-8 px-4 sm:px-6 lg:px-8 bg-gradient-to-r from-amber-900/10 via-slate-800/5 to-amber-900/10 select-none">
+        <div className="max-w-7xl mx-auto relative group/carousel">
+          {ads.length === 0 ? (
+            // Fallback default ad if empty
+            <a
+              href="https://maps.app.goo.gl/2SFBSzDjqRn9sY216"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="banner-featured-event"
+              className="w-full block group relative overflow-hidden rounded-3xl shadow-2xl hover:shadow-3xl transition-all duration-500 hover:-translate-y-1"
+            >
+              <div className="relative h-48 sm:h-64 md:h-72">
+                <div 
+                  className="absolute inset-0 bg-cover bg-center transition-transform duration-700 group-hover:scale-105"
+                  style={{ backgroundImage: `url('${injazEventImg}')` }}
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+                <div className={`absolute inset-0 flex flex-col justify-center p-6 sm:p-8 md:p-10 ${isRTL ? 'text-right items-end' : 'text-left items-start'}`}>
+                  <h2 className="text-xl sm:text-2xl md:text-3xl font-black text-white mb-2">
+                    {isRTL ? 'معرض الشركات الطلابية - إنجاز عُمان' : 'Student Companies Exhibition - Injaz Oman'}
+                  </h2>
+                  <p className="text-white/80 text-xs sm:text-sm max-w-md">
+                    {isRTL ? '٥ - ٧ مارس | مركز المعارض' : 'March 5-7 | Exhibition Centre'}
+                  </p>
                 </div>
               </div>
+            </a>
+          ) : (
+            <div className="relative overflow-hidden rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-500">
+              <AnimatePresence mode="wait">
+                {ads.map((ad, idx) => {
+                  if (idx !== currentAdIndex) return null;
+                  
+                  // Check if the link is external or internal
+                  const isExternal = ad.link?.startsWith("http");
+                  const ContainerTag = ad.link ? "a" : "div";
+                  const containerProps = ad.link ? {
+                    href: ad.link,
+                    target: isExternal ? "_blank" : undefined,
+                    rel: isExternal ? "noopener noreferrer" : undefined,
+                  } : {};
+
+                  return (
+                    <motion.div
+                      key={ad.id}
+                      initial={{ opacity: 0, x: isRTL ? -50 : 50 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: isRTL ? 50 : -50 }}
+                      transition={{ duration: 0.5, ease: "easeInOut" }}
+                    >
+                      <ContainerTag
+                        {...containerProps}
+                        className="w-full block relative overflow-hidden h-56 sm:h-64 md:h-80 cursor-pointer group"
+                      >
+                        {/* Background Image */}
+                        <div 
+                          className="absolute inset-0 bg-cover bg-center transition-transform duration-1000 group-hover:scale-105"
+                          style={{ backgroundImage: `url('${ad.image_url}')` }}
+                        />
+                        {/* Shading overlay */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/45 to-black/15 md:bg-gradient-to-r md:from-black/95 md:via-black/55 md:to-transparent" />
+                        
+                        {/* Live/Ad Tag */}
+                        <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
+                          <span className="px-3 py-1 bg-amber-500/90 text-white text-[10px] sm:text-xs font-black tracking-wide rounded-full shadow-lg animate-pulse">
+                            {isRTL ? "ترويج" : "PROMOTED"}
+                          </span>
+                        </div>
+
+                        {/* Content */}
+                        <div className={`absolute inset-0 flex flex-col justify-center p-6 sm:p-10 md:p-12 z-10 ${isRTL ? 'text-right items-end' : 'text-left items-start'}`}>
+                          <div className="flex items-center gap-2 mb-3">
+                            <Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
+                            <span className="text-amber-400 text-xs sm:text-sm font-black uppercase tracking-wider">
+                              {isRTL ? "مستجدات شومة" : "Shouma Spotlight"}
+                            </span>
+                          </div>
+
+                          <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white mb-2 leading-tight drop-shadow-md font-sans">
+                            {isRTL ? ad.title_ar : ad.title}
+                          </h2>
+
+                          <p className="text-white/85 text-xs sm:text-sm md:text-base max-w-xl mb-4 leading-relaxed font-sans drop-shadow">
+                            {isRTL ? ad.description_ar : ad.description}
+                          </p>
+
+                          {ad.link && (
+                            <span className="inline-flex items-center gap-2 text-xs font-bold text-amber-300 group-hover:text-amber-200 transition-colors bg-white/10 backdrop-blur-sm px-3.5 py-2 rounded-full border border-white/10">
+                              {isRTL ? "اكتشف المزيد الآن" : "Explore More Now"}
+                              <ChevronRight className={`w-3.5 h-3.5 transform transition-transform ${isRTL ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
+                            </span>
+                          )}
+                        </div>
+                      </ContainerTag>
+                    </motion.div>
+                  );
+                })}
+              </AnimatePresence>
+
+              {/* Navigation Arrows */}
+              {ads.length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={handlePrevAd}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-sm flex items-center justify-center transition-all opacity-0 group-hover/carousel:opacity-100 hover:scale-105 border border-white/10"
+                    aria-label="Previous Slide"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleNextAd}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 z-30 w-9 h-9 sm:w-11 sm:h-11 rounded-full bg-black/40 hover:bg-black/60 text-white backdrop-blur-sm flex items-center justify-center transition-all opacity-0 group-hover/carousel:opacity-100 hover:scale-105 border border-white/10"
+                    aria-label="Next Slide"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+
+                  {/* Indicator Dots */}
+                  <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-30 flex gap-2">
+                    {ads.map((_, dotIdx) => (
+                      <button
+                        key={dotIdx}
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setCurrentAdIndex(dotIdx);
+                        }}
+                        className={`w-2 h-2 rounded-full transition-all duration-300 ${
+                          dotIdx === currentAdIndex 
+                            ? "bg-amber-400 w-6" 
+                            : "bg-white/45 hover:bg-white/70"
+                        }`}
+                        aria-label={`Go to slide ${dotIdx + 1}`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
-          </a>
+          )}
         </div>
       </section>
 
@@ -322,7 +575,7 @@ export default function HomePage() {
             <img 
               src={shoumaLogo} 
               alt="شومة" 
-              className="h-10 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+              className="h-10 w-auto object-contain drop-shadow-sm rounded-md"
             />
           </div>
           <p className="text-sm text-muted-foreground" data-testid="text-copyright">

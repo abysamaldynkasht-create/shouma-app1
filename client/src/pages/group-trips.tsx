@@ -38,7 +38,7 @@ import {
   MapPin,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import logoImage from "@assets/شومة_1768320219408.jpg";
+import logoImage from "@/assets/shouma-logo.png";
 
 const preferenceKeys = [
   "prefAdventures",
@@ -221,7 +221,7 @@ export default function GroupTripsPage() {
               <img
                 src={logoImage}
                 alt="شومة"
-                className="h-8 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-9 w-auto object-contain rounded-md drop-shadow-sm"
               />
               <h1 className="text-lg font-bold text-foreground" data-testid="text-header-title">
                 {t("groupTrips")}

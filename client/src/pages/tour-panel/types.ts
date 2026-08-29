@@ -40,4 +40,5 @@ export interface TripBooking {
   status: 'assigned' | 'accepted' | 'declined' | 'completed';
   price: string;
   notes?: string;
+  badges?: string[];
 }

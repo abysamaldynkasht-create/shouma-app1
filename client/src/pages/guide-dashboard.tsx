@@ -22,7 +22,8 @@ import {
   ToggleLeft, 
   ToggleRight,
   Sparkles,
-  Search
+  Search,
+  Compass
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -33,6 +34,44 @@ export default function GuideDashboardPage() {
   const { isRTL } = useLanguage();
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Auth state
+  const [isAuthorized, setIsAuthorized] = useState(() => {
+    return sessionStorage.getItem("shouma_guides_auth") === "true";
+  });
+  const [email, setEmail] = useState("guide@shouma.com");
+  const [password, setPassword] = useState("");
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState("");
+
+  const handleLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError("");
+    if (!email || !password) {
+      setAuthError("يرجى إدخال البريد الإلكتروني وكلمة المرور.");
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      const res = await fetch("/api/portal-auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ portalType: "guides", email, password })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsAuthorized(true);
+        sessionStorage.setItem("shouma_guides_auth", "true");
+        setAuthError("");
+      } else {
+        setAuthError(data.message || "البريد الإلكتروني أو كلمة المرور غير صحيحة.");
+      }
+    } catch (err) {
+      setAuthError("حدث خطأ أثناء الاتصال بالخادم.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
   
   // Local state for selected guide ID (1-6) - default to 1 (Ahmed)
   const [selectedGuideId, setSelectedGuideId] = useState<number>(1);
@@ -135,6 +174,66 @@ export default function GuideDashboardPage() {
     const message = encodeURIComponent(`مرحباً ${userName}، أنا المرشد السياحي ${currentGuide?.nameAr}. لقد قمت بقبول طلب رحلتك عبر تطبيق شومة وتواصلت معك لبدء التنسيق.`);
     window.open(`https://wa.me/${cleanPhone}?text=${message}`, '_blank');
   };
+
+  if (!isAuthorized) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center px-4 font-sans" dir="rtl">
+        <div className="bg-slate-900 text-slate-100 p-8 rounded-3xl shadow-2xl border border-slate-800 w-full max-w-md relative overflow-hidden">
+          <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-emerald-500 via-amber-500 to-indigo-500" />
+          
+          <div className="flex flex-col items-center text-center mt-4">
+            <div className="p-4 bg-slate-800 rounded-full text-emerald-400 mb-4 border border-slate-700">
+              <Compass className="h-8 w-8" />
+            </div>
+            <h1 className="text-2xl font-black text-white">لوحة المرشدين السياحيين والشركاء</h1>
+            <p className="text-slate-400 text-xs mt-2">أدخل البريد الإلكتروني وكلمة المرور المضافة من المدير عبر لوحة التحكم الكبرى</p>
+          </div>
+
+          <form onSubmit={handleLoginSubmit} className="mt-6 space-y-4 text-right">
+            <div>
+              <label className="block text-slate-300 text-xs font-bold mb-1.5">البريد الإلكتروني</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="guide@shouma.com"
+                className="w-full bg-slate-950 text-slate-100 px-4 py-3 rounded-xl border border-slate-800 focus:outline-none focus:border-emerald-500 transition-colors text-right dir-ltr"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-slate-300 text-xs font-bold mb-1.5">كلمة المرور</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="•••••••••••••"
+                className="w-full bg-slate-950 text-slate-100 px-4 py-3 rounded-xl border border-slate-800 focus:outline-none focus:border-emerald-500 transition-colors text-center text-lg tracking-wider"
+                required
+              />
+            </div>
+
+            {authError && (
+              <p className="text-rose-400 text-xs text-center bg-rose-500/10 p-2.5 rounded-lg border border-rose-500/20">{authError}</p>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoggingIn}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-3 px-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-emerald-950/20"
+            >
+              {isLoggingIn ? "جاري التحقق..." : "تسجيل الدخول كمرشد سياحي"}
+            </button>
+          </form>
+
+          <button onClick={() => setLocation("/home")} className="w-full mt-4 text-slate-500 hover:text-slate-300 text-xs text-center">
+            العودة للرئيسية
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 font-sans" dir="rtl">

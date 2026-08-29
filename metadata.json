@@ -1,0 +1,6 @@
+{
+  "name": "شومة - دليلك السياحي الذكي",
+  "description": "Smart Tourism Platform for Oman",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

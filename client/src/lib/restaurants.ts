@@ -3,14 +3,15 @@ import alburjCafeImg from "@/assets/alburj-cafe.png";
 import lagunaCafeImg from "@/assets/laguna-cafe.png";
 import baitAlmadghootImg from "@/assets/bait-almadghoot.png";
 import musandamFanrImg from "@/assets/musandam-fanr.png";
-import tamraNizwaImg from "@/assets/tamra-nizwa.png";
+import tamraNizwaImg from "@/assets/tamra-nizwa-2.png";
 import greekHouseImg from "@/assets/greek-house.png";
-import alhawashImg from "@/assets/alhawash.png";
+import alhawashImg from "@/assets/alhawash-2.png";
 import souqDuqmImg from "@/assets/souq-duqm.png";
-import ainAlkhaleejImg from "@assets/image_1772573893188.png";
-import binAteeqImg from "@assets/image_1772574323731.png";
-import cafeBateelImg from "@assets/image_1772603776289.png";
-import darcysKitchenImg from "@assets/image_1772604487806.png";
+import binAteeqImg from "@/assets/image_1772574323731.png";
+
+const ainAlkhaleejImg = "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?q=80&w=800";
+const cafeBateelImg = "https://images.unsplash.com/photo-1554118811-1e0d58224f24?q=80&w=800";
+const darcysKitchenImg = "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?q=80&w=800";
 
 export const restaurants: Restaurant[] = [
   {

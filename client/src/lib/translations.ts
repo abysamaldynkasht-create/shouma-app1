@@ -1,4 +1,4 @@
-export type Language = 'ar' | 'en' | 'fr' | 'es' | 'tr' | 'zh' | 'ja' | 'fa';
+export type Language = 'ar' | 'en' | 'fr' | 'es' | 'de' | 'tr' | 'zh' | 'ja' | 'fa';
 
 export interface LanguageInfo {
   code: Language;
@@ -13,6 +13,7 @@ export const languages: LanguageInfo[] = [
   { code: 'en', name: 'English', nativeName: 'English', direction: 'ltr', flag: 'EN' },
   { code: 'fr', name: 'French', nativeName: 'Français', direction: 'ltr', flag: 'FR' },
   { code: 'es', name: 'Spanish', nativeName: 'Español', direction: 'ltr', flag: 'ES' },
+  { code: 'de', name: 'German', nativeName: 'Deutsch', direction: 'ltr', flag: 'DE' },
   { code: 'tr', name: 'Turkish', nativeName: 'Türkçe', direction: 'ltr', flag: 'TR' },
   { code: 'zh', name: 'Chinese', nativeName: '中文', direction: 'ltr', flag: 'ZH' },
   { code: 'ja', name: 'Japanese', nativeName: '日本語', direction: 'ltr', flag: 'JA' },
@@ -93,8 +94,8 @@ export const translations: Record<Language, Record<string, string>> = {
     restaurantsDesc: 'تذوق ألذ المأكولات',
     hiking: 'رحلات الهايكنق',
     hikingDesc: 'مغامرات في الطبيعة',
-    taxis: 'سيارات الأجرة',
-    taxisDesc: 'تنقل بسهولة وراحة',
+    taxis: 'تأجير السيارات',
+    taxisDesc: 'تأجير سيارات ونقل مريح',
     hospitals: 'المستشفيات',
     hospitalsDesc: 'مراكز صحية ومستشفيات',
     tourGuides: 'المرشدين السياحيين',
@@ -441,7 +442,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   en: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: 'Back',
     search: 'Search',
     all: 'All',
@@ -512,8 +513,8 @@ export const translations: Record<Language, Record<string, string>> = {
     restaurantsDesc: 'Taste the finest cuisine',
     hiking: 'Hiking Trips',
     hikingDesc: 'Adventures in nature',
-    taxis: 'Taxis',
-    taxisDesc: 'Travel easily and comfortably',
+    taxis: 'Car Rental',
+    taxisDesc: 'Car rental and comfortable transport',
     hospitals: 'Hospitals',
     hospitalsDesc: 'Health centers and hospitals',
     tourGuides: 'Tour Guides',
@@ -860,7 +861,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   fr: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: 'Retour',
     search: 'Rechercher',
     all: 'Tous',
@@ -1279,7 +1280,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   es: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: 'Volver',
     search: 'Buscar',
     all: 'Todos',
@@ -1695,10 +1696,62 @@ export const translations: Record<Language, Record<string, string>> = {
     costUpdated: 'Costo Actualizado',
     replaceSimilar: 'Reemplazar con Similar',
   },
+
+  de: {
+    // Common
+    appName: 'Shouma',
+    back: 'Zurück',
+    search: 'Suchen',
+    all: 'Alle',
+    available: 'Verfügbar',
+    unavailable: 'Nicht verfügbar',
+    noResults: 'Keine Ergebnisse gefunden',
+    tryDifferentSearch: 'Versuchen Sie es mit anderen Begriffen',
+    copyright: 'Alle Rechte vorbehalten',
+    perDay: 'Pro Tag',
+    perKm: 'Pro Km',
+    perNight: 'Pro Nacht',
+    years: 'Jahre',
+    call: 'Anrufen',
+    whatsapp: 'WhatsApp',
+    book: 'Jetzt buchen',
+    viewDetails: 'Details anzeigen',
+    location: 'Standort',
+    rating: 'Bewertung',
+    reviews: 'Bewertungen',
+    featured: 'Hervorgehoben',
+
+    welcomeBack: 'Willkommen zurück',
+    loginSubtitle: 'Melden Sie sich an, um Oman zu erkunden',
+    username: 'Benutzername',
+    password: 'Passwort',
+    login: 'Anmelden',
+    noAccount: 'Noch kein Konto?',
+    createAccount: 'Neues Konto erstellen',
+    welcomeMessage: 'Willkommen bei Shouma!',
+    hello: 'Hallo',
+    error: 'Fehler',
+    loading: 'Laden...',
+    voiceGuide: 'Sprachführer',
+    stopVoice: 'Stoppen',
+
+    welcomeToShouma: 'Willkommen bei Shouma',
+    homeSubtitle: 'Ihr kompletter Reiseführer für die schönsten Reiseziele im Oman',
+    searchPlaceholder: 'Suchen Sie nach Ihrem Lieblingsziel...',
+    attractions: 'Sehenswürdigkeiten',
+    hotels: 'Hotels',
+    restaurants: 'Restaurants',
+    hiking: 'Wanderungen',
+    taxis: 'Taxis',
+    hospitals: 'Krankenhäuser',
+    tourGuides: 'Reiseleiter',
+    shoumatak: 'Shoumatak',
+    omrCurrency: 'OMR',
+  },
   
   tr: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: 'Geri',
     search: 'Ara',
     all: 'Tümü',
@@ -2117,7 +2170,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   zh: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: '返回',
     search: '搜索',
     all: '全部',
@@ -2536,7 +2589,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   ja: {
     // Common
-    appName: 'Shouma',
+    appName: 'شومة',
     back: '戻る',
     search: '検索',
     all: 'すべて',
@@ -2955,7 +3008,7 @@ export const translations: Record<Language, Record<string, string>> = {
   
   fa: {
     // Common
-    appName: 'شوما',
+    appName: 'شومة',
     back: 'بازگشت',
     search: 'جستجو',
     all: 'همه',

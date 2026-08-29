@@ -24,10 +24,11 @@ import {
   Navigation,
   Globe
 } from "lucide-react";
-import logoUrl from "@assets/شومة_1768320219408.jpg";
-import mutrahSouqHeroImg from "@/assets/mutrah-souq.png";
+import logoUrl from "@/assets/shouma-logo.png";
+import mutrahSouqHeroImg from "@/assets/mutrah-fort.png";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { languages } from "@/lib/translations";
+import { Translate } from "@/components/Translate";
 
 export default function AttractionsPage() {
   const [, setLocation] = useLocation();
@@ -73,6 +74,7 @@ export default function AttractionsPage() {
       name: item.name || '',
       nameAr: item.name_ar || item.nameAr || item.name || '',
       description: item.description || '',
+      descriptionEn: item.description_en || item.descriptionEn || '',
       governorate: item.governorate || '',
       governorateId: item.governorate_id || item.governorateId || 'muscat',
       wilayat: item.wilayat || '',
@@ -149,7 +151,7 @@ export default function AttractionsPage() {
               <img 
                 src={logoUrl} 
                 alt={t('appName')} 
-                className="h-8 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-9 w-auto object-contain rounded-md drop-shadow-sm"
               />
               <span className="text-lg font-bold">{t('attractions')}</span>
             </div>
@@ -370,18 +372,30 @@ export default function AttractionsPage() {
                   </div>
                   <CardContent className="p-4">
                     <h3 className="text-lg font-bold text-foreground mb-2 line-clamp-1" data-testid={`text-attraction-name-${attraction.id}`}>
-                      {attraction.nameAr}
+                      <Translate text={attraction.nameAr} fallback={attraction.name} />
                     </h3>
                     <div className="flex items-center gap-1 text-muted-foreground text-sm mb-3">
                       <MapPin className="w-4 h-4 flex-shrink-0" />
-                      <span className="line-clamp-1">{attraction.wilayat}</span>
+                      <span className="line-clamp-1">
+                        <Translate text={attraction.wilayat} />
+                      </span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-                      {attraction.description}
+                      {language === 'ar' ? (
+                        attraction.description
+                      ) : language === 'en' && attraction.descriptionEn ? (
+                        attraction.descriptionEn
+                      ) : language === 'fr' && (attraction as any).descriptionFr ? (
+                        (attraction as any).descriptionFr
+                      ) : language === 'tr' && (attraction as any).descriptionTr ? (
+                        (attraction as any).descriptionTr
+                      ) : (
+                        <Translate text={attraction.description} fallback={attraction.descriptionEn || attraction.description} />
+                      )}
                     </p>
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <Badge variant="outline" className="text-xs">
-                        {attraction.governorate}
+                        <Translate text={attraction.governorate} />
                       </Badge>
                       <Button
                         size="sm"
@@ -411,7 +425,7 @@ export default function AttractionsPage() {
       <footer className="py-8 px-4 border-t border-border">
         <div className="max-w-7xl mx-auto text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <img src={logoUrl} alt={t('appName')} className="h-6 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert" />
+            <img src={logoUrl} alt={t('appName')} className="h-7 w-auto object-contain rounded-md" />
             <span className="font-semibold">{t('appName')}</span>
           </div>
           <p className="text-sm text-muted-foreground">

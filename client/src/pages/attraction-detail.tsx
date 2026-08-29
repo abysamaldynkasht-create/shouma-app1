@@ -16,10 +16,11 @@ import {
   Tag,
   Globe
 } from "lucide-react";
-import logoUrl from "@assets/شومة_1768320219408.jpg";
+import logoUrl from "@/assets/shouma-logo.png";
 import { VoiceGuide } from "@/components/VoiceGuide";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { languages } from "@/lib/translations";
+import { Translate } from "@/components/Translate";
 import {
   Select,
   SelectContent,
@@ -69,6 +70,7 @@ export default function AttractionDetailPage() {
       name: item.name || '',
       nameAr: item.name_ar || item.nameAr || item.name || '',
       description: item.description || '',
+      descriptionEn: item.description_en || item.descriptionEn || '',
       governorate: item.governorate || '',
       governorateId: item.governorate_id || item.governorateId || 'muscat',
       wilayat: item.wilayat || '',
@@ -157,7 +159,7 @@ export default function AttractionDetailPage() {
               <img 
                 src={logoUrl} 
                 alt={t('appName')} 
-                className="h-8 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-9 w-auto object-contain rounded-md drop-shadow-sm"
               />
               <span className="text-lg font-bold">{t('placeDetails')}</span>
             </div>
@@ -200,16 +202,18 @@ export default function AttractionDetailPage() {
           <div className="max-w-6xl mx-auto">
             <div className="flex flex-wrap gap-2 mb-4">
               <Badge className="bg-white/20 backdrop-blur-sm text-white border-0">
-                {attraction.category}
+                <Translate text={attraction.category} />
               </Badge>
             </div>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-3 drop-shadow-lg" data-testid="text-attraction-title">
-              {attraction.nameAr}
+              <Translate text={attraction.nameAr} fallback={attraction.name} />
             </h1>
             <div className="flex flex-wrap items-center gap-4 text-white/90">
               <div className="flex items-center gap-2">
                 <MapPin className="w-5 h-5" />
-                <span>{attraction.wilayat}</span>
+                <span>
+                  <Translate text={attraction.wilayat} />
+                </span>
               </div>
               <div className="flex items-center gap-1">
                 <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
@@ -255,13 +259,17 @@ export default function AttractionDetailPage() {
                 />
               </div>
               <p className="text-muted-foreground leading-relaxed text-lg" data-testid="text-attraction-description">
-                {language === 'ar' || language === 'fa' 
-                  ? attraction.description 
-                  : language === 'fr' 
-                    ? (attraction.descriptionFr || attraction.descriptionEn || attraction.description)
-                    : language === 'tr'
-                      ? (attraction.descriptionTr || attraction.descriptionEn || attraction.description)
-                      : (attraction.descriptionEn || attraction.description)}
+                {language === 'ar' ? (
+                  attraction.description
+                ) : language === 'en' && attraction.descriptionEn ? (
+                  attraction.descriptionEn
+                ) : language === 'fr' && (attraction as any).descriptionFr ? (
+                  (attraction as any).descriptionFr
+                ) : language === 'tr' && (attraction as any).descriptionTr ? (
+                  (attraction as any).descriptionTr
+                ) : (
+                  <Translate text={attraction.description} fallback={attraction.descriptionEn || attraction.description} />
+                )}
               </p>
             </section>
 
@@ -344,18 +352,21 @@ export default function AttractionDetailPage() {
                   </div>
                 </div>
 
-                {attraction.mapUrl && (
-                  <a 
-                    href={attraction.mapUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-testid="button-get-directions"
-                    className="w-full h-12 inline-flex items-center justify-center gap-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-                  >
-                    <Navigation className="w-5 h-5" />
-                    {t('getDirections')}
-                  </a>
-                )}
+                {(() => {
+                  const mapUrl = attraction.mapUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent((attraction.nameAr || attraction.name || '') + ' Oman')}`;
+                  return (
+                    <a 
+                      href={mapUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="button-get-directions"
+                      className="w-full h-12 inline-flex items-center justify-center gap-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
+                    >
+                      <Navigation className="w-5 h-5" />
+                      {t('getDirections')}
+                    </a>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
@@ -402,7 +413,7 @@ export default function AttractionDetailPage() {
       <footer className="py-8 px-4 border-t border-border">
         <div className="max-w-7xl mx-auto text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
-            <img src={logoUrl} alt={t('appName')} className="h-6 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert" />
+            <img src={logoUrl} alt={t('appName')} className="h-7 w-auto object-contain rounded-md" />
             <span className="font-semibold">{t('appName')}</span>
           </div>
           <p className="text-sm text-muted-foreground">

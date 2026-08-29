@@ -2,6 +2,7 @@ import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, ArrowLeft, Compass, MapPin, Star, Clock, ExternalLink } from "lucide-react";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Translate } from "@/components/Translate";
 import { activities } from "@/lib/activities";
 import { Card, CardContent } from "@/components/ui/card";
 import ThemeToggle from "@/components/ThemeToggle";
@@ -91,10 +92,10 @@ export default function ActivitiesPage() {
                 className="overflow-hidden hover:shadow-lg transition-shadow"
                 data-testid={`card-activity-${activity.id}`}
               >
-                <div className="aspect-video relative">
+                 <div className="aspect-video relative">
                   <img
                     src={activity.image}
-                    alt={isRTL ? activity.nameAr : activity.name}
+                    alt={activity.nameAr || activity.name}
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-sm rounded-full px-2 py-1 flex items-center gap-1">
@@ -104,18 +105,18 @@ export default function ActivitiesPage() {
                 </div>
                 <CardContent className="p-4">
                   <h3 className="text-lg font-bold text-foreground mb-2">
-                    {isRTL ? activity.nameAr : activity.name}
+                    <Translate text={activity.nameAr || activity.name} />
                   </h3>
                   <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
                     <MapPin className="w-4 h-4" />
-                    <span>{activity.location}</span>
+                    <span><Translate text={activity.location} /></span>
                   </div>
                   <div className="flex items-center gap-2 text-muted-foreground text-sm mb-3">
                     <Clock className="w-4 h-4" />
-                    <span>{activity.duration}</span>
+                    <span><Translate text={activity.duration} /></span>
                   </div>
                   <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
-                    {isRTL ? activity.descriptionAr : activity.description}
+                    <Translate text={activity.descriptionAr || activity.description} />
                   </p>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <span className="text-lg font-bold text-primary">{activity.price}</span>
@@ -135,7 +136,7 @@ export default function ActivitiesPage() {
                     <div className="mt-4 pt-4 border-t border-border">
                       <p className="text-sm font-semibold text-foreground mb-2">{isRTL ? 'الفروع:' : 'Branches:'}</p>
                       <div className="flex flex-wrap gap-2">
-                        {activity.branches.map((branch, idx) => (
+                        {activity.branches.map((branch: any, idx: number) => (
                           <Button
                             key={idx}
                             variant="outline"
@@ -145,7 +146,7 @@ export default function ActivitiesPage() {
                             className="text-xs"
                           >
                             <MapPin className="w-3 h-3" />
-                            <span className={isRTL ? 'mr-1' : 'ml-1'}>{isRTL ? branch.nameAr : branch.name}</span>
+                            <span className={isRTL ? 'mr-1' : 'ml-1'}><Translate text={branch.nameAr || branch.name} /></span>
                           </Button>
                         ))}
                       </div>

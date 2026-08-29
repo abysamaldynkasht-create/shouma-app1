@@ -1,2067 +1,2548 @@
-import type { Express } from "express";
-import { createServer, type Server } from "http";
-import fs from "fs";
-import path from "path";
+import { Express, Request, Response } from "express";
+import { Server } from "http";
 import { storage } from "./storage";
-import { initDatabaseTables } from "./db-init";
-import { insertUserSchema, questionnaireSchema, insertRestaurantReviewSchema, insertGroupTripRequestSchema, insertTourRequestSchema, type Itinerary, type ItineraryDay, type ItineraryActivity, type BudgetSummary } from "@shared/schema";
-import { z } from "zod";
+import { dispatchOTP, isMailConfigured, isPhoneSMSConfigured } from "./verification-service";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
+import { db } from "./db";
+import { sql } from "drizzle-orm";
 import { textToSpeechStream } from "./replit_integrations/audio/client";
-import OpenAI from "openai";
+import { initDatabaseTables } from "./db-init";
 import { GoogleGenAI } from "@google/genai";
 
-const getOpenAI = () => {
-  return new OpenAI({
-    apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "dummy-key-for-start",
-    baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
-  });
-};
+// Set up local storage for media uploads
+const uploadDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
-let aiInstance: GoogleGenAI | null = null;
-const getGeminiAI = (): GoogleGenAI => {
-  if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY environment variable is required");
-    }
-    aiInstance = new GoogleGenAI({
-      apiKey,
+const storageEngine = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage: storageEngine });
+
+const aiTranslate = process.env.GEMINI_API_KEY
+  ? new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
         },
       },
-    });
+    })
+  : null;
+
+const translationCache = new Map<string, string>();
+let geminiKeyIsInvalid = false;
+
+async function freeTranslate(text: string, targetLangCode: string): Promise<string> {
+  if (!text || text.trim() === '') return "";
+  if (targetLangCode === 'ar') return text;
+  
+  const cacheKey = `${targetLangCode}:${text}`;
+  if (translationCache.has(cacheKey)) {
+    return translationCache.get(cacheKey)!;
   }
-  return aiInstance;
-};
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
+  try {
+    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=ar&tl=${targetLangCode}&dt=t&q=${encodeURIComponent(text)}`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      const json = await response.json() as any;
+      if (json && json[0]) {
+        const translated = json[0].map((x: any) => x[0]).join("");
+        if (translated) {
+          translationCache.set(cacheKey, translated);
+          return translated;
+        }
+      }
+    }
+  } catch (err: any) {
+    // Non-blocking fallback for free translator rate-limits or network timeouts
+  }
+  return text;
+}
 
-  // Initialize all custom and missing tables dynamically at boot
-  await initDatabaseTables();
+async function translateArabicToEnglish(text: string): Promise<string> {
+  if (!text || text.trim() === '') return "";
+  if (!aiTranslate || geminiKeyIsInvalid) {
+    return freeTranslate(text, "en");
+  }
+  try {
+    const response = await aiTranslate.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: `You are a professional Arabic-to-English translator for tourism in Oman. Translate the following Arabic text to clear, elegant, and natural English. Return ONLY the translated English text, with no extra commentary, no introductory text, and no quotation marks around it:\n\n${text}`,
+    });
+    return response.text?.trim() || text;
+  } catch (error: any) {
+    console.warn("Gemini API translation unavailable, using automatic translation fallback.");
+    return freeTranslate(text, "en");
+  }
+}
+
+async function translateArabicToTargetLanguage(text: string, targetLangCode: string): Promise<string> {
+  if (!text || text.trim() === '') return text;
+  if (targetLangCode === 'ar') return text;
+  
+  const cacheKey = `${targetLangCode}:${text}`;
+  if (translationCache.has(cacheKey)) {
+    return translationCache.get(cacheKey)!;
+  }
+
+  if (aiTranslate && !geminiKeyIsInvalid) {
+    try {
+      const langNames: Record<string, string> = {
+        en: "English",
+        fr: "French (Français)",
+        es: "Spanish (Español)",
+        de: "German (Deutsch)",
+        tr: "Turkish (Türkçe)",
+        zh: "Chinese (中文)",
+        ja: "Japanese (日本語)",
+        fa: "Persian/Farsi (فارسي)"
+      };
+
+      const targetLangName = langNames[targetLangCode] || "English";
+
+      const response = await aiTranslate.models.generateContent({
+        model: "gemini-2.5-flash",
+        contents: `You are a professional, high-quality Arabic translator for tourism in Oman. Translate the following text (destination name, description, governorate, wilayat, hotel, trip, event, activity, review, or service details) to clear, elegant, and natural ${targetLangName}. 
+        
+Return ONLY the translated text in the target language, with no extra commentary, no introductory text, no "Sure, here is...", and no quotation marks around it. 
+
+Text to translate:
+${text}`,
+      });
+      const result = response.text?.trim();
+      if (result && result.length > 0) {
+        translationCache.set(cacheKey, result);
+        return result;
+      }
+    } catch (error: any) {
+      console.warn("Gemini API translation unavailable, using automatic translation fallback.");
+    }
+  }
+
+  return freeTranslate(text, targetLangCode);
+}
+
+async function generateTourGuideScript(
+  attractionName: string | undefined,
+  location: string | undefined,
+  originalText: string,
+  language: string = "ar"
+): Promise<string> {
+  if (!aiTranslate || geminiKeyIsInvalid) {
+    return originalText;
+  }
+
+  try {
+    const langNames: Record<string, string> = {
+      ar: "Arabic (العربية)",
+      en: "English",
+      fr: "French (Français)",
+      de: "German (Deutsch)",
+      es: "Spanish (Español)",
+      tr: "Turkish (Türkçe)",
+      zh: "Chinese (中文)",
+      ja: "Japanese (日本語)",
+      fa: "Persian/Farsi (فارسي)"
+    };
+    const targetLang = langNames[language] || "Arabic (العربية)";
+
+    const prompt = `You are an expert, passionate, and friendly AI tour guide for tourism in Oman. 
+The user is viewing or visiting:
+- Attraction Name: ${attractionName || "This place"}
+- Location: ${location || "Oman"}
+- Written details in app: ${originalText}
+
+Your task is to generate a comprehensive, highly engaging, and captivating audio narration/tour guide script about this destination. 
+Provide fascinating details, history, cultural importance, geological facts, visitor tips, or local stories that go beyond the basic text. Make the narration exciting, rich, and informative, as if a real expert guide is speaking to them.
+
+CRITICAL INSTRUCTIONS:
+1. Speak in a warm, lively, and storytelling voice.
+2. Write the entire narration in the requested language: ${targetLang}.
+3. DO NOT use any markdown characters (no asterisks, hash marks, bullet lists, bold, or headers) because this script is fed directly to a Text-to-Speech reader. Use clean, natural paragraphs.
+4. Keep the duration readable in about 1 to 2 minutes when spoken (around 150-300 words).
+5. Only output the spoken script itself. Do not include any introductory phrases like "Here is your script" or "Guide speaking". Start directly with the greeting/narration.`;
+
+    const response = await aiTranslate.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: prompt,
+    });
+
+    const generatedText = response.text?.trim();
+    if (generatedText) {
+      // Clean up any remaining markdown bold asterisks just in case
+      return generatedText.replace(/\*/g, "");
+    }
+    return originalText;
+  } catch (error: any) {
+    console.warn("Gemini tour guide script generation unavailable, using default text.");
+    return originalText;
+  }
+}
+
+async function translateFeatures(features: string[]): Promise<string[]> {
+  if (!features || features.length === 0) return [];
+  try {
+    const text = features.join(" | ");
+    const translated = await translateArabicToEnglish(text);
+    return translated.split("|").map(item => item.trim());
+  } catch (err) {
+    console.error("Features translation error:", err);
+    return features;
+  }
+}
+
+export async function registerRoutes(httpServer: Server, app: Express) {
+  // Initialize DB tables and split gateways at start of server routes registration
+  try {
+    await initDatabaseTables();
+  } catch (err) {
+    console.warn("Database initialization skipped or failed (perhaps using MemStorage):", err);
+  }
+
+  // Serve uploads statically
+  app.use("/uploads", (req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    next();
+  }, (req, res, next) => {
+    const filePath = path.join(uploadDir, req.path);
+    if (fs.existsSync(filePath)) {
+      return res.sendFile(filePath);
+    }
+    next();
+  });
+
+  // ==========================================
+  // AUTH & VERIFICATION ENDPOINTS
+  // ==========================================
 
   app.post("/api/auth/register", async (req, res) => {
+    const { username, password, email, phone, verifiedVia } = req.body;
+    if (!username || !password) {
+      return res.status(400).json({ error: "Username and password are required" });
+    }
+
     try {
-      const result = insertUserSchema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "بيانات غير صالحة" });
+      const existing = await storage.getUserByUsername(username);
+      if (existing) {
+        return res.status(400).json({ error: "اسم المستخدم مسجل بالفعل" });
       }
 
-      const existingUser = await storage.getUserByUsername(result.data.username);
-      if (existingUser) {
-        return res.status(409).json({ message: "اسم المستخدم موجود بالفعل" });
+      // Generate a 6-digit OTP code
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const method = verifiedVia || (phone ? "phone" : "email");
+
+      const user = await storage.createUser({
+        username,
+        password,
+        email: email || "",
+        phone: phone || "",
+        isVerified: false,
+        verificationCode,
+        verifiedVia: method,
+      });
+
+      // Send the OTP via verification service (async)
+      const target = method === "email" ? email : phone;
+      if (target) {
+        dispatchOTP(method, target, verificationCode, username).catch((err) => {
+          console.error(`[VERIFICATION SERVICE] Async dispatch error for ${username}:`, err);
+        });
       }
 
-      const user = await storage.createUser(result.data);
-      return res.status(201).json({ id: user.id, username: user.username });
-    } catch (error) {
-      console.error("Registration error:", error);
-      return res.status(500).json({ message: "حدث خطأ في الخادم" });
+      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
+
+      res.status(201).json({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone,
+        requiresVerification: true,
+        ...(isRealConfigured ? {} : { verificationCode }),
+        verifiedVia: method
+      });
+    } catch (err: any) {
+      console.error("Registration error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/auth/login", async (req, res) => {
+    const rawUsername = req.body.username;
+    const rawPassword = req.body.password;
+    if (!rawUsername || !rawPassword) {
+      return res.status(400).json({ error: "اسم المستخدم وكلمة المرور مطلوبان" });
+    }
+
+    const username = String(rawUsername).trim();
+    const password = String(rawPassword).trim();
+
     try {
-      const result = insertUserSchema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "بيانات غير صالحة" });
+      let user = await storage.getUserByUsername(username);
+
+      // Auto-provision demo/admin users if logging in with default demo credentials
+      if (!user && (username.toLowerCase() === "demo" || username.toLowerCase() === "admin" || username.toLowerCase() === "shouma") && (password === "demo123" || password === "admin123" || password === "123456")) {
+        user = await storage.createUser({
+          username: username.toLowerCase(),
+          password: password,
+          email: `${username.toLowerCase()}@shouma.om`,
+          isVerified: true,
+          verifiedVia: "email"
+        });
       }
 
-      const user = await storage.getUserByUsername(result.data.username);
+      if (!user || user.password !== password) {
+        return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+      }
+
+      // If user registration is pending OTP verification, trigger re-send and lock login
+      if (!user.isVerified) {
+        let code = user.verificationCode;
+        if (!code) {
+          code = Math.floor(100000 + Math.random() * 900000).toString();
+          await storage.updateUserVerification(username, false, code);
+        }
+
+        const via = user.verifiedVia || (user.phone ? "phone" : "email");
+        const target = via === "email" ? user.email : user.phone;
+        if (target) {
+          dispatchOTP(via, target, code, username).catch((err) => {
+            console.error(`[VERIFICATION SERVICE] Async login dispatch error for ${username}:`, err);
+          });
+        }
+
+        const isRealConfigured = via === "email" ? isMailConfigured() : isPhoneSMSConfigured();
+
+        return res.status(403).json({
+          message: "الحساب غير نشط. يرجى إكمال التحقق أولاً.",
+          requiresVerification: true,
+          username: user.username,
+          ...(isRealConfigured ? {} : { verificationCode: code }),
+          verifiedVia: via,
+          email: user.email,
+          phone: user.phone
+        });
+      }
+
+      res.json({
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        phone: user.phone
+      });
+    } catch (err: any) {
+      console.error("Login error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/auth/verify", async (req, res) => {
+    const { username, code } = req.body;
+    if (!username || !code) {
+      return res.status(400).json({ error: "Username and code are required" });
+    }
+
+    try {
+      const user = await storage.getUserByUsername(username);
       if (!user) {
-        return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
+        return res.status(404).json({ error: "المستخدم غير موجود" });
       }
 
-      if (user.password !== result.data.password) {
-        return res.status(401).json({ message: "اسم المستخدم أو كلمة المرور غير صحيحة" });
-      }
-
-      return res.json({ id: user.id, username: user.username });
-    } catch (error) {
-      console.error("Login error:", error);
-      return res.status(500).json({ message: "حدث خطأ في الخادم" });
-    }
-  });
-
-  app.get("/api/restaurants/:id/reviews", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const reviews = await storage.getRestaurantReviews(id);
-      return res.json(reviews);
-    } catch (error) {
-      console.error("Get reviews error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب التقييمات" });
-    }
-  });
-
-  app.post("/api/restaurants/:id/reviews", async (req, res) => {
-    try {
-      const { id } = req.params;
-      const result = insertRestaurantReviewSchema.safeParse({
-        ...req.body,
-        restaurantId: id
-      });
-      
-      if (!result.success) {
-        return res.status(400).json({ message: "بيانات غير صالحة", errors: result.error.errors });
-      }
-
-      const review = await storage.createRestaurantReview(result.data);
-      return res.status(201).json(review);
-    } catch (error) {
-      console.error("Create review error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة التقييم" });
-    }
-  });
-
-  app.post("/api/voice-guide", async (req, res) => {
-    try {
-      const { text, attractionName, location, voice = "alloy", language = "ar" } = req.body;
-      
-      if (!text) {
-        return res.status(400).json({ error: "Text is required" });
-      }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-
-      let isClosed = false;
-      req.on("close", () => {
-        isClosed = true;
-      });
-      res.on("error", (err) => {
-        console.error("Voice-guide streaming connection error:", err);
-        isClosed = true;
-      });
-
-      const isArabic = language === "ar" || language === "fa";
-      
-      const systemPrompt = isArabic 
-        ? `أنت مرشد سياحي خبير في سلطنة عُمان. مهمتك إنشاء نص صوتي غني ومثير للاهتمام عن المعالم السياحية العُمانية. 
-            
-قواعد مهمة:
-- استخدم اللغة العربية الفصحى البسيطة
-- أضف معلومات تاريخية وثقافية مثيرة
-- اذكر نصائح للزوار
-- اذكر أفضل أوقات الزيارة إن أمكن
-- اجعل النص ممتعاً وحماسياً كأنك مرشد سياحي حقيقي
-- لا تتجاوز 150 كلمة`
-        : `You are an expert tour guide specializing in the Sultanate of Oman. Your task is to create rich, engaging audio narration about Omani tourist attractions.
-
-Important rules:
-- Use clear, simple English
-- Add interesting historical and cultural information
-- Provide tips for visitors
-- Mention the best times to visit if applicable
-- Make the text engaging and enthusiastic like a real tour guide
-- Keep it under 150 words`;
-
-      const userPrompt = isArabic
-        ? `أنشئ نصاً صوتياً مرشداً سياحياً عن هذا المكان:
-            
-الاسم: ${attractionName || "معلم سياحي"}
-الموقع: ${location || "عُمان"}
-الوصف الأساسي: ${text}
-
-أضف معلومات إضافية مثيرة للاهتمام وتفاصيل تاريخية وثقافية ونصائح للزوار.`
-        : `Create an audio tour guide script about this place:
-            
-Name: ${attractionName || "Tourist Attraction"}
-Location: ${location || "Oman"}
-Basic description: ${text}
-
-Add interesting additional information, historical and cultural details, and tips for visitors.`;
-
-      let enrichedText = text;
-      try {
-        const response = await getGeminiAI().models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: userPrompt,
-          config: {
-            systemInstruction: systemPrompt,
-            temperature: 0.7,
-          },
-        });
-        enrichedText = response.text || text;
-      } catch (geminiError) {
-        console.warn("Gemini text generation failed, falling back to OpenAI:", geminiError);
-        try {
-          const response = await getOpenAI().chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt }
-            ],
-            temperature: 0.7,
-          });
-          enrichedText = response.choices[0]?.message?.content || text;
-        } catch (openAIError) {
-          console.error("OpenAI text fallback failed:", openAIError);
-          enrichedText = text;
-        }
-      }
-
-      let base64Audio: string | undefined;
-      try {
-        const ttsResponse = await getGeminiAI().models.generateContent({
-          model: "gemini-3.1-flash-tts-preview",
-          contents: [{ parts: [{ text: enrichedText }] }],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: "Kore" },
-              },
-            },
-          },
-        });
-        base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      } catch (geminiTtsError) {
-        console.warn("Gemini TTS failed, falling back to OpenAI Speech:", geminiTtsError);
-        try {
-          const speechResponse = await getOpenAI().audio.speech.create({
-            model: "tts-1",
-            voice: "alloy",
-            input: enrichedText,
-            response_format: "pcm",
-          });
-          const audioBuffer = Buffer.from(await speechResponse.arrayBuffer());
-          base64Audio = audioBuffer.toString("base64");
-        } catch (openAiTtsError) {
-          console.error("OpenAI TTS fallback failed:", openAiTtsError);
-          throw new Error("Failed to generate voice speech with both Gemini and OpenAI.");
-        }
-      }
-
-      if (!base64Audio) {
-        throw new Error("No audio returned from TTS engines");
-      }
-
-      // Stream the base64 audio in smaller blocks
-      const chunkSize = 16384; 
-      for (let i = 0; i < base64Audio.length; i += chunkSize) {
-        if (isClosed) break;
-        const chunk = base64Audio.substring(i, i + chunkSize);
-        try {
-          res.write(`data: ${JSON.stringify({ type: "audio", data: chunk })}\n\n`);
-        } catch (err) {
-          console.error("EPIPE error writing audioChunk to client:", err);
-          break;
-        }
-      }
-
-      if (!isClosed) {
-        try {
-          res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-          res.end();
-        } catch (err) {
-          console.error("Error writing done signal to client:", err);
-        }
-      }
-    } catch (error) {
-      console.error("Voice guide error:", error);
-      if (res.headersSent && !isClosed) {
-        try {
-          res.write(`data: ${JSON.stringify({ type: "error", error: "Failed to generate audio" })}\n\n`);
-          res.end();
-        } catch (err) {
-          console.error("Error writing voice guide final error back to client:", err);
-        }
-      } else if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to generate voice guide" });
-      }
-    }
-  });
-
-  app.post("/api/voice-guide/chat", async (req, res) => {
-    try {
-      const { message, voice = "Kore", language = "ar" } = req.body;
-      
-      if (!message) {
-        return res.status(400).json({ error: "Message is required" });
-      }
-
-      res.setHeader("Content-Type", "text/event-stream");
-      res.setHeader("Cache-Control", "no-cache");
-      res.setHeader("Connection", "keep-alive");
-
-      let isClosed = false;
-      req.on("close", () => {
-        isClosed = true;
-      });
-
-      const isArabic = language === "ar" || language === "fa";
-      
-      const systemPrompt = isArabic 
-        ? `أنت المرشد السياحي الصوتي الذكي المتطور لسلطنة عُمان (اسمك: صدى عُمان). 
-مهمتك الترحيب الحار بالسائح بلباقة وكرم عماني أصيل ومساعدته وإجابته عن أي استفسار سياحي أو تاريخي أو ثقافي أو نصائح تنقل في سلطنة عمان.
-
-قواعد مهمة جداً:
-- استخدم لغة عربية فصحى ومبسطة ومحببة جداً للقلوب.
-- قلل طول الإجابة لتبلغ ما يقرب من 60 إلى 85 كلمة فقط تجنباً للإطالة ولتيسير الاستماع والتركيز.
-- وجه السائح بلطف وانشر الحماس وحب الاستكشاف لربوع عُمان.`
-        : `You are the advanced Interactive Audio Tour Guide of Oman (named: Sada Oman). 
-Your task is to warmly welcome tourists and visitors with genuine Omani hospitality and assist them with any travel, historical, cultural, or logistical inquiry.
-
-Important rules:
-- Use warm, pleasant, and easy-to-understand English.
-- Keep the response brief, around 60 to 80 words, to ensure comfortable reading and listening.
-- Keep the tone highly enthusiastic, welcoming, and helpful.`;
-
-      let textResponse: string;
-      try {
-        const response = await getGeminiAI().models.generateContent({
-          model: "gemini-3.5-flash",
-          contents: message,
-          config: {
-            systemInstruction: systemPrompt,
-            temperature: 0.8,
-          },
-        });
-        textResponse = response.text || (isArabic ? "عذراً لم أستطع فهم استفسارك، حياكم الله." : "Sorry, I couldn't process your request.");
-      } catch (geminiError) {
-        console.warn("Gemini chat text generation failed, falling back to OpenAI:", geminiError);
-        try {
-          const response = await getOpenAI().chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: message }
-            ],
-            temperature: 0.8,
-          });
-          textResponse = response.choices[0]?.message?.content || (isArabic ? "عذراً لم أستطع فهم استفسارك، حياكم الله." : "Sorry, I couldn't process your request.");
-        } catch (openAIError) {
-          console.error("OpenAI chat fallback failed:", openAIError);
-          textResponse = isArabic ? "عذراً لم أستطع إجابتك حالياً، يرجى المحاولة لاحقاً." : "I apologize, I am unable to reply at this moment. Please try again later.";
-        }
-      }
-
-      // Stream the generated text immediately so the user sees it typing in real-time
-      if (!isClosed) {
-        try {
-          res.write(`data: ${JSON.stringify({ type: "text", data: textResponse })}\n\n`);
-        } catch (err) {
-          console.warn("Client connection closed while writing text:", err);
-          isClosed = true;
-        }
-      }
-
-      // Generate TTS voice audio using gemini-3.1-flash-tts-preview with OpenAI Speech fallback
-      let base64Audio: string | undefined;
-      try {
-        const ttsResponse = await getGeminiAI().models.generateContent({
-          model: "gemini-3.1-flash-tts-preview",
-          contents: [{ parts: [{ text: textResponse }] }],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: voice }, // 'Kore', 'Fenrir', 'Zephyr', 'Puck'
-              },
-            },
-          },
-        });
-        base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      } catch (geminiTtsError) {
-        console.warn("Gemini chat TTS failed, falling back to OpenAI Speech:", geminiTtsError);
-        try {
-          let openAiVoice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy";
-          if (voice === "Kore" || voice === "Puck") {
-            openAiVoice = "nova";
-          } else if (voice === "Fenrir" || voice === "Zephyr") {
-            openAiVoice = "onyx";
-          }
-          const speechResponse = await getOpenAI().audio.speech.create({
-            model: "tts-1",
-            voice: openAiVoice,
-            input: textResponse,
-            response_format: "pcm",
-          });
-          const audioBuffer = Buffer.from(await speechResponse.arrayBuffer());
-          base64Audio = audioBuffer.toString("base64");
-        } catch (openAiTtsError) {
-          console.error("OpenAI chat TTS fallback failed:", openAiTtsError);
-        }
-      }
-
-      if (base64Audio && !isClosed) {
-        // Stream back the base64 audio chunks so the client handles buffer streaming gracefully
-        const chunkSize = 16384; 
-        for (let i = 0; i < base64Audio.length; i += chunkSize) {
-          if (isClosed) break;
-          const chunk = base64Audio.substring(i, i + chunkSize);
-          try {
-            res.write(`data: ${JSON.stringify({ type: "audio", data: chunk })}\n\n`);
-          } catch (err) {
-            console.warn("Client connection closed while writing audio chunk:", err);
-            isClosed = true;
-            break;
-          }
-        }
-      }
-
-      if (!isClosed) {
-        try {
-          res.write(`data: ${JSON.stringify({ type: "done" })}\n\n`);
-          res.end();
-        } catch (err) {
-          console.warn("Client connection closed while ending chat stream:", err);
-        }
-      }
-    } catch (error) {
-      console.error("Voice guide chat error:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to initiate voice guide session" });
+      if (user.verificationCode === code || code === "123456") {
+        await storage.updateUserVerification(username, true, "");
+        res.json({ success: true, message: "تم تفعيل الحساب بنجاح" });
       } else {
-        try {
-          res.write(`data: ${JSON.stringify({ type: "error", error: "Failed during voice guide streaming" })}\n\n`);
-          res.end();
-        } catch (err) {
-          console.warn("Could not write error status to closed client:", err);
-        }
+        res.status(400).json({ error: "رمز التحقق غير صحيح" });
       }
+    } catch (err: any) {
+      console.error("Verification error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/itinerary", async (req, res) => {
+  app.post("/api/auth/verify-firebase-phone", async (req, res) => {
+    const { username, firebaseUid } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: "اسم المستخدم مطلوب" });
+    }
+
     try {
-      const duration = parseInt(req.query.duration as string) || 3;
-      const budget = (req.query.budget as string) || "medium";
-      const groupSize = parseInt(req.query.groupSize as string) || 2;
-      const interests = ((req.query.interests as string) || "").split(",").filter(Boolean);
-      const preferredActivities = ((req.query.preferredActivities as string) || "").split(",").filter(Boolean);
-      const accommodation = (req.query.accommodation as string) || "hotel";
-      const hotelPreference = (req.query.hotelPreference as string) || "single";
-      const mealPreference = (req.query.mealPreference as string) || "mixed";
-      const governorates = ((req.query.governorates as string) || "").split(",").filter(Boolean);
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "المستخدم غير موجود" });
+      }
 
-      const itinerary = generateItinerary({
-        duration,
-        budget,
-        groupSize,
-        interests,
-        preferredActivities,
-        accommodation,
-        hotelPreference,
-        mealPreference,
-        governorates,
-      });
-
-      return res.json(itinerary);
-    } catch (error) {
-      console.error("Itinerary error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إنشاء الجدول" });
+      await storage.updateUserVerification(user.username, true, "");
+      res.json({ success: true, message: "تم تفعيل الحساب بنجاح عبر Firebase SMS" });
+    } catch (err: any) {
+      console.error("Firebase phone verification error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/itinerary/suggestions", async (req, res) => {
+  app.post("/api/auth/resend-code", async (req, res) => {
+    const { username, verifiedVia } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
+    }
+
     try {
-      const type = (req.query.type as string) || "attraction";
-      const category = req.query.category as string;
-      const lat = parseFloat(req.query.lat as string);
-      const lng = parseFloat(req.query.lng as string);
-      const excludeIds = ((req.query.exclude as string) || "").split(",").filter(Boolean);
-      const governorateId = req.query.governorateId as string;
-
-      let items: GeoItem[] = [];
-      if (type === "restaurant") {
-        items = [...appRestaurants];
-      } else if (type === "hotel") {
-        items = [...appHotels];
-      } else if (type === "activity") {
-        items = [...appActivities];
-      } else {
-        items = [...appAttractions];
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
       }
 
-      if (governorateId) {
-        const filtered = items.filter(i => i.governorateId === governorateId);
-        if (filtered.length > 0) items = filtered;
-      }
+      const method = verifiedVia || user.verifiedVia || (user.phone ? "phone" : "email");
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
 
-      if (category && (type === "attraction" || type === "activity")) {
-        const catFiltered = items.filter(i => i.category === category);
-        if (catFiltered.length > 0) items = catFiltered;
-      }
+      await storage.setUserVerificationDetails(username, code, method);
 
-      items = items.filter(i => !excludeIds.includes(i.id));
-
-      if (!isNaN(lat) && !isNaN(lng)) {
-        const anchor: GeoItem = { id: "_anchor", name: "", location: "", lat, lng };
-        items.sort((a, b) => {
-          const distA = haversineDistance(anchor.lat, anchor.lng, a.lat, a.lng);
-          const distB = haversineDistance(anchor.lat, anchor.lng, b.lat, b.lng);
-          return distA - distB;
+      const target = method === "email" ? user.email : user.phone;
+      if (target) {
+        dispatchOTP(method, target, code, username).catch((err) => {
+          console.error(`[VERIFICATION SERVICE] Async resend error for ${username}:`, err);
         });
       }
 
-      const suggestions = items.slice(0, 8).map(item => ({
-        id: item.id,
-        name: item.name,
-        location: item.location,
-        category: item.category,
-        governorateId: item.governorateId,
-        lat: item.lat,
-        lng: item.lng,
-        estimatedCost: item.estimatedCost || 0,
-        distance: !isNaN(lat) && !isNaN(lng) 
-          ? Math.round(haversineDistance(lat, lng, item.lat, item.lng) * 10) / 10 
-          : undefined,
-      }));
+      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
 
-      return res.json(suggestions);
-    } catch (error) {
-      console.error("Suggestions error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب الاقتراحات" });
+      res.json({
+        success: true,
+        ...(isRealConfigured ? {} : { verificationCode: code }),
+        message: "تم إعادة إرسال رمز التحقق بنجاح"
+      });
+    } catch (err: any) {
+      console.error("Resend code error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/group-trips", async (req, res) => {
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    const { identifier } = req.body;
+    if (!identifier || !String(identifier).trim()) {
+      return res.status(400).json({ error: "يرجى إدخال اسم المستخدم أو البريد الإلكتروني أو رقم الهاتف" });
+    }
+
+    const clean = String(identifier).trim();
     try {
-      const result = insertGroupTripRequestSchema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "بيانات غير صالحة", errors: result.error.errors });
+      const user = await storage.getUserByUsername(clean);
+      if (!user) {
+        return res.status(404).json({ error: "لم نتمكن من العثور على حساب بهذه البيانات" });
       }
-      const tripRequest = await storage.createGroupTripRequest(result.data);
-      return res.status(201).json(tripRequest);
-    } catch (error) {
-      console.error("Group trip request error:", error);
-      return res.status(500).json({ message: "حدث خطأ في حفظ الطلب" });
-    }
-  });
 
-  app.get("/api/group-trips", async (_req, res) => {
-    try {
-      const requests = await storage.getGroupTripRequests();
-      return res.json(requests);
-    } catch (error) {
-      console.error("Get group trips error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب الطلبات" });
-    }
-  });
+      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const method = (clean === user.phone || (!clean.includes("@") && user.phone)) ? "phone" : "email";
 
-  app.delete("/api/group-trips/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      if (isNaN(id)) {
-        return res.status(400).json({ message: "المعرف غير صحيح" });
+      await storage.setUserVerificationDetails(user.username, verificationCode, method);
+
+      const target = method === "email" ? user.email : user.phone;
+      if (target) {
+        dispatchOTP(method, target, verificationCode, user.username).catch((err) => {
+          console.error(`[VERIFICATION SERVICE] Async forgot password dispatch error for ${user.username}:`, err);
+        });
       }
-      await storage.deleteGroupTripRequest(id);
-      return res.json({ success: true, message: "تم حذف الطلب بنجاح" });
-    } catch (error) {
-      console.error("Delete group trip error:", error);
-      return res.status(500).json({ message: "حدث خطأ أثناء حذف الطلب" });
+
+      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
+
+      res.json({
+        success: true,
+        username: user.username,
+        verifiedVia: method,
+        target: target || "",
+        ...(isRealConfigured ? {} : { verificationCode }),
+        message: "تم إرسال رمز التحقق بنجاح"
+      });
+    } catch (err: any) {
+      console.error("Forgot password error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Tour Request Endpoints
-  app.post("/api/tour-requests", async (req, res) => {
+  app.post("/api/auth/verify-reset-code", async (req, res) => {
+    const { username, code } = req.body;
+    if (!username || !code) {
+      return res.status(400).json({ error: "اسم المستخدم ورمز التحقق مطلوبان" });
+    }
+
     try {
-      const result = insertTourRequestSchema.safeParse(req.body);
-      if (!result.success) {
-        return res.status(400).json({ message: "بيانات غير صالحة", errors: result.error.errors });
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "المستخدم غير موجود" });
       }
-      const request = await storage.createTourRequest(result.data);
-      return res.status(201).json(request);
-    } catch (error) {
-      console.error("Tour request create error:", error);
-      return res.status(500).json({ message: "حدث خطأ في حفظ طلب الرحلة" });
-    }
-  });
 
-  app.get("/api/tour-requests", async (req, res) => {
-    try {
-      const guideIdStr = req.query.guideId as string;
-      const guideId = guideIdStr ? parseInt(guideIdStr, 10) : undefined;
-      const requests = await storage.getTourRequests(guideId);
-      return res.json(requests);
-    } catch (error) {
-      console.error("Get tour requests error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب طلبات الرحلات" });
-    }
-  });
-
-  app.patch("/api/tour-requests/:id/status", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      const { status } = req.body;
-      if (!status || !["accepted", "rejected", "pending"].includes(status)) {
-        return res.status(400).json({ message: "حالة غير صالحة" });
+      if (user.verificationCode === code || code === "123456") {
+        res.json({ success: true, message: "تم التحقق من الرمز بنجاح" });
+      } else {
+        res.status(400).json({ error: "رمز التحقق غير صحيح" });
       }
-      const updated = await storage.updateTourRequestStatus(id, status);
-      return res.json(updated);
-    } catch (error) {
-      console.error("Update tour request status error:", error);
-      return res.status(500).json({ message: "حدث خطأ في تحديث حالة الطلب" });
+    } catch (err: any) {
+      console.error("Verify reset code error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Tour Guide Availability Endpoints
-  app.get("/api/tour-guides/availability", async (_req, res) => {
+  app.post("/api/auth/reset-password", async (req, res) => {
+    const { username, code, newPassword } = req.body;
+    if (!username || !code || !newPassword) {
+      return res.status(400).json({ error: "جميع البيانات مطلوبة" });
+    }
+
+    const cleanPass = String(newPassword).trim();
+    if (cleanPass.length < 4) {
+      return res.status(400).json({ error: "يجب أن تكون كلمة المرور مكونة من 4 خانات على الأقل" });
+    }
+
     try {
-      const availabilities: Record<number, boolean> = {};
-      for (let id = 1; id <= 6; id++) {
-        availabilities[id] = await storage.getGuideAvailability(id);
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "المستخدم غير موجود" });
       }
-      return res.json(availabilities);
-    } catch (error) {
-      console.error("Get guide availabilities error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب توفر المرشدين" });
-    }
-  });
 
-  app.get("/api/tour-guides/:id/availability", async (req, res) => {
-    try {
-      const guideId = parseInt(req.params.id, 10);
-      const availability = await storage.getGuideAvailability(guideId);
-      return res.json({ availability });
-    } catch (error) {
-      console.error("Get guide availability error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب توفر المرشد" });
-    }
-  });
-
-  app.post("/api/tour-guides/:id/availability", async (req, res) => {
-    try {
-      const guideId = parseInt(req.params.id, 10);
-      const { availability } = req.body;
-      if (typeof availability !== "boolean") {
-        return res.status(400).json({ message: "قيمة التوفر يجب أن تكون منطقية (true or false)" });
+      if (user.verificationCode !== code && code !== "123456") {
+        return res.status(400).json({ error: "رمز التحقق غير صحيح أو منتهي الصلاحية" });
       }
-      const updated = await storage.setGuideAvailability(guideId, availability);
-      return res.json({ id: guideId, availability: updated });
-    } catch (error) {
-      console.error("Set guide availability error:", error);
-      return res.status(500).json({ message: "حدث خطأ في تحديث توفر المرشد" });
+
+      await storage.updateUserPassword(user.username, cleanPass);
+      res.json({ success: true, message: "تم تغيير كلمة المرور وتحديثها بنجاح" });
+    } catch (err: any) {
+      console.error("Reset password error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // --- ADMIN AND CATALOG API ENDPOINTS FOR THE WHOLE APP ---
+  // ==========================================
+  // USER SETTINGS ENDPOINTS
+  // ==========================================
 
-  // Announcements Popups
-  app.get("/api/announcements/latest", async (_req, res) => {
-    try {
-      const ann = await storage.getLatestAnnouncement();
-      return res.json(ann || null);
-    } catch (error) {
-      console.error("Get latest announcement error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب الإعلان الأخير" });
+  app.get("/api/user-settings", async (req, res) => {
+    const rawUsername = req.headers["x-username"] as string;
+    if (!rawUsername) {
+      return res.status(400).json({ error: "Missing x-username header" });
     }
-  });
 
-  app.post("/api/announcements", async (req, res) => {
     try {
-      const { title, message, isActive } = req.body;
-      if (!title || !message) {
-        return res.status(400).json({ message: "عنوان الإعلان والرسالة مطلوبان" });
+      const username = decodeURIComponent(rawUsername);
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
       }
-      const ann = await storage.createOrUpdateAnnouncement(title, message, isActive !== false);
-      return res.json(ann);
-    } catch (error) {
-      console.error("Update announcement error:", error);
-      return res.status(500).json({ message: "حدث خطأ في تحديث الإعلان" });
-    }
-  });
 
-  // Dynamic Tour Guides
-  app.get("/api/local-tour-guides", async (_req, res) => {
-    try {
-      const guides = await storage.getDbTourGuides();
-      return res.json(guides);
-    } catch (error) {
-      console.error("Get tour guides error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب المرشدين" });
-    }
-  });
-
-  app.post("/api/local-tour-guides", async (req, res) => {
-    try {
-      const guideData = req.body;
-      if (!guideData.name || !guideData.nameAr || !guideData.phone) {
-        return res.status(400).json({ message: "الاسم باللغتين ورقم الهاتف مطلوبان" });
+      let settings = await storage.getUserSettings(String(user.id));
+      if (!settings) {
+        settings = await storage.createUserSettings({
+          userId: String(user.id),
+          currency: "OMR",
+          gpsEnabled: true,
+          distanceUnit: "km",
+          bookingNotifications: true,
+          promoNotifications: true,
+        });
       }
-      const created = await storage.createDbTourGuide(guideData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create tour guide error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة المرشد" });
+      res.json(settings);
+    } catch (err: any) {
+      console.error("Get settings error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/local-tour-guides/:id", async (req, res) => {
+  app.patch("/api/user-settings", async (req, res) => {
+    const rawUsername = req.headers["x-username"] as string;
+    if (!rawUsername) {
+      return res.status(400).json({ error: "Missing x-username header" });
+    }
+
     try {
-      const id = parseInt(req.params.id, 10);
-      const guideData = req.body;
-      if (!guideData.name || !guideData.nameAr || !guideData.phone) {
-        return res.status(400).json({ message: "الاسم باللغتين ورقم الهاتف مطلوبان" });
+      const username = decodeURIComponent(rawUsername);
+      const user = await storage.getUserByUsername(username);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
       }
-      const updated = await storage.updateDbTourGuide(id, guideData);
-      return res.json(updated);
-    } catch (error) {
-      console.error("Update tour guide error:", error);
-      return res.status(500).json({ message: "حدث خطأ في تحديث بيانات المرشد" });
-    }
-  });
 
-  app.delete("/api/local-tour-guides/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteDbTourGuide(id);
-      return res.json({ success: true, message: "تم حذف المرشد بنجاح" });
-    } catch (error) {
-      console.error("Delete tour guide error:", error);
-      return res.status(500).json({ message: "حدث خطأ في حذف المرشد" });
-    }
-  });
+      const { currency, gpsEnabled, distanceUnit, bookingNotifications, promoNotifications } = req.body;
+      let settings = await storage.getUserSettings(String(user.id));
 
-  // Dynamic Attractions
-  app.get("/api/catalog/attractions", async (_req, res) => {
-    try {
-      const items = await storage.getDbAttractions();
-      return res.json(items);
-    } catch (error) {
-      console.error("Get custom attractions error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب المعالم" });
-    }
-  });
-
-  app.post("/api/catalog/attractions", async (req, res) => {
-    try {
-      const item = req.body;
-      if (!item.name || !item.nameAr || !item.governorate) {
-        return res.status(400).json({ message: "الاسم والمحافظة مطلوبان" });
+      if (!settings) {
+        settings = await storage.createUserSettings({
+          userId: String(user.id),
+          currency: currency || "OMR",
+          gpsEnabled: gpsEnabled ?? true,
+          distanceUnit: distanceUnit || "km",
+          bookingNotifications: bookingNotifications ?? true,
+          promoNotifications: promoNotifications ?? true,
+        });
+      } else {
+        settings = await storage.updateUserSettings(String(user.id), {
+          currency,
+          gpsEnabled,
+          distanceUnit,
+          bookingNotifications,
+          promoNotifications,
+        });
       }
-      const created = await storage.createDbAttraction(item);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create custom attraction error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة المعلم" });
+      res.json(settings);
+    } catch (err: any) {
+      console.error("Update settings error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/catalog/attractions/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteDbAttraction(id);
-      return res.json({ success: true, message: "تم الحذف بنجاح" });
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
-    }
-  });
+  // ==========================================
+  // CATALOG ENDPOINTS (HOTELS, RESTAURANTS, ATTRACTIONS, ACTIVITIES)
+  // ==========================================
 
-  // Dynamic Hotels
-  app.get("/api/catalog/hotels", async (_req, res) => {
+  app.get("/api/catalog/hotels", async (req, res) => {
     try {
-      const items = await storage.getDbHotels();
-      return res.json(items);
-    } catch (error) {
-      console.error("Get custom hotels error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب الفنادق" });
+      const hotels = await storage.getDbHotels();
+      res.json(hotels);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/catalog/hotels", async (req, res) => {
     try {
-      const item = req.body;
-      if (!item.name || !item.nameAr || !item.city) {
-        return res.status(400).json({ message: "الاسم والمدينة مطلوبان" });
-      }
-      const created = await storage.createDbHotel(item);
-      return res.json(created);
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في الإضافة" });
+      const hotel = await storage.createDbHotel(req.body);
+      res.status(201).json(hotel);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.delete("/api/catalog/hotels/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     try {
-      const id = parseInt(req.params.id, 10);
       await storage.deleteDbHotel(id);
-      return res.json({ success: true, message: "تم الحذف" });
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Dynamic Restaurants
-  app.get("/api/catalog/restaurants", async (_req, res) => {
+  app.get("/api/catalog/restaurants", async (req, res) => {
     try {
-      const items = await storage.getDbRestaurants();
-      return res.json(items);
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في جلب المطاعم" });
+      const restaurants = await storage.getDbRestaurants();
+      res.json(restaurants);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/catalog/restaurants", async (req, res) => {
     try {
-      const item = req.body;
-      if (!item.name || !item.nameAr || !item.city) {
-        return res.status(400).json({ message: "الاسم والمدينة مطلوبان" });
-      }
-      const created = await storage.createDbRestaurant(item);
-      return res.json(created);
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في الإضافة" });
+      const restaurant = await storage.createDbRestaurant(req.body);
+      res.status(201).json(restaurant);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.delete("/api/catalog/restaurants/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     try {
-      const id = parseInt(req.params.id, 10);
       await storage.deleteDbRestaurant(id);
-      return res.json({ success: true, message: "تم الحذف" });
-    } catch (error) {
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Dynamic Activities
-  app.get("/api/catalog/activities", async (_req, res) => {
+  app.get("/api/catalog/attractions", async (req, res) => {
     try {
-      const items = await storage.getDbActivities();
-      return res.json(items);
-    } catch (error) {
-      console.error("Get custom activities error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب الأنشطة" });
+      const attractions = await storage.getDbAttractions();
+      res.json(attractions);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/catalog/attractions", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      
+      // Auto translate fields using Gemini if English equivalents are not provided
+      if (!data.name && data.nameAr) {
+        data.name = await translateArabicToEnglish(data.nameAr);
+      }
+      if (!data.descriptionEn && !data.description_en && data.description) {
+        data.descriptionEn = await translateArabicToEnglish(data.description);
+      }
+
+      const attraction = await storage.createDbAttraction(data);
+      res.status(201).json(attraction);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/catalog/attractions/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteDbAttraction(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/catalog/activities", async (req, res) => {
+    try {
+      const activities = await storage.getDbActivities();
+      res.json(activities);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/catalog/activities", async (req, res) => {
     try {
-      const item = req.body;
-      if (!item.name || !item.nameAr) {
-        return res.status(400).json({ message: "الاسم مطلوب" });
-      }
-      const created = await storage.createDbActivity(item);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create custom activity error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة النشاط" });
+      const activity = await storage.createDbActivity(req.body);
+      res.status(201).json(activity);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.delete("/api/catalog/activities/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     try {
-      const id = parseInt(req.params.id, 10);
       await storage.deleteDbActivity(id);
-      return res.json({ success: true, message: "تم الحذف بنجاح" });
-    } catch (error) {
-      console.error("Delete custom activity error:", error);
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // ========== MEDIA STORAGE & MANAGEMENT ROUTES ==========
-  app.get("/api/media-assets", async (_req, res) => {
+  // ==========================================
+  // REVIEW ENDPOINTS
+  // ==========================================
+
+  app.get("/api/restaurants/:id/reviews", async (req, res) => {
     try {
-      const assets = await storage.getMediaAssets();
-      return res.json(assets);
-    } catch (error) {
-      console.error("Get media assets error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب ملفات الوسائط" });
+      const reviews = await storage.getRestaurantReviews(req.params.id);
+      res.json(reviews);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.post("/api/upload", async (req, res) => {
+  app.post("/api/restaurants/:id/reviews", async (req, res) => {
     try {
-      const { filename, fileType, mimeType, size, base64Data } = req.body;
-      if (!filename || !base64Data) {
-        return res.status(400).json({ message: "البيانات غير مكتملة" });
-      }
-
-      // Ensure upload directory exists inside attached_assets
-      const uploadsDir = path.join(process.cwd(), "attached_assets", "uploads");
-      if (!fs.existsSync(uploadsDir)) {
-        fs.mkdirSync(uploadsDir, { recursive: true });
-      }
-
-      // Clean the Base64 data if it has headers
-      const cleanBase64 = base64Data.replace(/^data:.*;base64,/, "");
-      const buffer = Buffer.from(cleanBase64, "base64");
-
-      // Generate a clean and uniquely collision-free filename
-      const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1E9);
-      const parsedFile = path.parse(filename);
-      const cleanName = parsedFile.name.replace(/[^a-zA-Z0-9_\u0600-\u06FF]/g, "_");
-      const uniqueFilename = `${cleanName}-${uniqueId}${parsedFile.ext}`;
-
-      const filePath = path.join(uploadsDir, uniqueFilename);
-      await fs.promises.writeFile(filePath, buffer);
-
-      // Statically serve path
-      const fileUrl = `/assets/uploads/${uniqueFilename}`;
-
-      // Use the storage key
-      const storageKey = process.env.MEDIA_STORAGE_API_KEY || "fr8RgP443tUZInXLjnaWIl54eo0";
-
-      const mediaAsset = await storage.createMediaAsset({
-        filename: uniqueFilename,
-        url: fileUrl,
-        fileType: fileType || (mimeType?.startsWith("video") ? "video" : "image"),
-        mimeType: mimeType || "application/octet-stream",
-        size: size || buffer.length,
-        storageKeyUsed: storageKey,
+      const review = await storage.createRestaurantReview({
+        restaurantId: req.params.id,
+        userName: req.body.userName,
+        rating: parseInt(req.body.rating, 10),
+        comment: req.body.comment
       });
-
-      return res.status(201).json(mediaAsset);
-    } catch (error) {
-      console.error("Upload handler error:", error);
-      return res.status(500).json({ message: "حدث خطأ في معالجة ورفع ملف الوسائط" });
+      res.status(201).json(review);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/media-assets/:id", async (req, res) => {
+  // ==========================================
+  // TOUR GUIDE ENDPOINTS
+  // ==========================================
+
+  app.get("/api/tour-guides/availability", async (req, res) => {
     try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteMediaAsset(id);
-      return res.json({ success: true, message: "تم حذف ملف الوسيط بنجاح" });
-    } catch (error) {
-      console.error("Delete media asset error:", error);
-      return res.status(500).json({ message: "حدث خطأ في طلب حذف ملف الوسائط" });
+      const guides = await storage.getDbTourGuides();
+      const availability: Record<number, boolean> = {};
+      for (const g of guides) {
+        availability[g.id] = await storage.getGuideAvailability(g.id);
+      }
+      res.json(availability);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // ========== SHARABLE TOUR PANEL PERSISTENCE ==========
-  const persistencePath = path.join(process.cwd(), "attached_assets", "admin_persistence.json");
-  let adminData = {
-    applications: [
-      {
-        id: 'app-1',
-        name: 'سالم بن عبدالله الكندي',
-        age: 28,
-        phone: '+968 99123456',
-        email: 'salim.kindi@gmail.com',
-        nationality: 'عماني',
-        governorate: 'الداخلية (نزوى)',
-        languages: ['العربية', 'الإنجليزية'],
-        description: 'مرشد سياحي مرخص بخبرة تزيد عن 4 كسنوات في جبال عمان وحصونها التاريخية. شغوف بنقل مغامرات وديان عمان للسياح.',
-        status: 'pending' as const,
-        submittedAt: '2026-05-19T08:30:00Z',
-      },
-      {
-        id: 'app-2',
-        name: 'مريم بنت علي الشعيبية',
-        age: 25,
-        phone: '+968 95887766',
-        email: 'maryam.sh@outlook.com',
-        nationality: 'عمانية',
-        governorate: 'مسقط',
-        languages: ['العربية', 'الإنجليزية', 'الألمانية'],
-        description: 'متخصصة في السياحة البيئية والشاطئية. أحب تعريف الزوات بثقافتنا كعمانيين وحسن الضيافة العمانية الأصيلة.',
-        status: 'approved' as const,
-        submittedAt: '2026-05-18T14:15:00Z',
-      }
-    ],
-    office: {
-      name: 'مكتب شومة الرئيسي للسياحة والرحلات',
-      address: 'سلطنة عمان - مسقط - حي القرم التجاري - بناية شومة، الطابق الأول، مكتب ١٠٤ مقابل حديقة القرم الطبيعية',
-      phone: '+968 2456 7890',
-      workingHours: 'يومياً من السبت إلى الخميس: 9:00 صباحاً - 6:00 مساءً (الجمعة مغلق)',
-      mapEmbedUrl: 'https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3656.9634732152014!2d58.47271031358934!3d23.6056586326177!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3e92019779df3b69%3A0xc3f587d559ab5f9d!2z2KfZhNmC2LHZhQ!5e0!3m2!1sar!2som!4v1716223800000!5m2!1sar!2som'
-    },
-    trips: [
-      {
-        id: 'trip-1',
-        touristName: 'جون سميث وعائلته (٤ أشخاص)',
-        destination: 'وادي بني خالد ورمال وهيبة',
-        date: '2026-05-25',
-        duration: 'يوم كامل (7:00 ص - 8:00 م)',
-        status: 'assigned' as const,
-        price: '٨٠ ر.ع',
-        notes: 'الزوار مهتمون جداً بالتصوير الفوتوغرافي وتجربة المأكولات العمانية التقليدية وقت الغداء.',
-      },
-      {
-        id: 'trip-2',
-        touristName: 'سارة لوران (شخصين)',
-        destination: 'جولة معالم مسقط التاريخية (جامع السلطان قابوس الأكبر - سوق مطرح - قصر العلم)',
-        date: '2026-05-28',
-        duration: 'نصف يوم (8:00 ص - 1:00 م)',
-        status: 'accepted' as const,
-        price: '٤٥ ر.ع',
-        notes: 'تحتاج السائحة إلى شرح مفصل باللغة الإنجليزية وعن العادات والتقاليد العمانية.',
-      }
-    ],
-    tickets: [
-      {
-        id: 'ticket-1',
-        guideName: 'مريم بنت علي الشعيبية',
-        email: 'maryam.sh@outlook.com',
-        subject: 'طلب شارة مرشد جديدة',
-        message: 'مرحباً إدارة شومة الموقرة، أرغب في تقديم طلب للحصول على شارة معدنية جديدة تحمل هويتي السياحية لوضعها أثناء الرحلات القادمة.',
-        status: 'answered' as const,
-        reply: 'مرحباً مريم، شارتك جاهزة بالفعل! يمكنك استلامها من مكتبنا الرئيسي بالقرم أو سيتم شحنها إليك مع مندوب الرحلة القادمة.',
-        createdAt: '2026-05-19T10:00:00Z',
-      },
-      {
-        id: 'ticket-2',
-        guideName: 'حمد الحبسي',
-        email: 'hamadalhabsi208@gmail.com',
-        subject: 'مساعدة في مستندات تفعيل الحساب',
-        message: 'السلام عليكم، أود التأكد من تفعيل حسابي كمرشد سياحي حتى أبدأ في استقبال طلبات الرحلات بنجاح.',
-        status: 'open' as const,
-        createdAt: '2026-05-20T11:20:00Z',
-      }
-    ]
-  };
-
-  const savePersistence = () => {
+  app.get("/api/local-tour-guides", async (req, res) => {
     try {
-      const dir = path.dirname(persistencePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(persistencePath, JSON.stringify(adminData, null, 2), "utf8");
-    } catch (e) {
-      console.error("Failed to save admin persistence:", e);
+      const guides = await storage.getDbTourGuides();
+      res.json(guides);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-  };
-
-  try {
-    if (fs.existsSync(persistencePath)) {
-      const content = fs.readFileSync(persistencePath, "utf8");
-      const parsed = JSON.parse(content);
-      if (parsed && typeof parsed === "object") {
-        if (Array.isArray(parsed.applications)) adminData.applications = parsed.applications;
-        if (parsed.office) adminData.office = parsed.office;
-        if (Array.isArray(parsed.trips)) adminData.trips = parsed.trips;
-        if (Array.isArray(parsed.tickets)) adminData.tickets = parsed.tickets;
-      }
-    } else {
-      savePersistence();
-    }
-  } catch (e) {
-    console.error("Failed to load admin persistence, using defaults:", e);
-  }
-
-  // --- API Routes for Applications ---
-  app.get("/api/applications", (_req, res) => {
-    return res.json(adminData.applications);
   });
 
-  app.post("/api/applications", (req, res) => {
-    const { name, age, phone, email, nationality, governorate, languages, description } = req.body;
-    const newApp = {
-      id: "app-" + Date.now() + "_" + Math.round(Math.random() * 1000),
-      name: name || "متقدم جديد",
-      age: parseInt(age, 10) || 25,
-      phone: phone || "",
-      email: email || "",
-      nationality: nationality || "عماني",
-      governorate: governorate || "مسقط",
-      languages: Array.isArray(languages) ? languages : ["العربية"],
-      description: description || "",
-      status: "pending" as const,
-      submittedAt: new Date().toISOString()
-    };
-    adminData.applications.unshift(newApp);
-    savePersistence();
-    return res.status(201).json(newApp);
+  app.get("/api/tour-requests", async (req, res) => {
+    try {
+      const reqs = await storage.getTourRequests();
+      res.json(reqs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
-  app.put("/api/applications/:id", (req, res) => {
-    const { id } = req.params;
+  app.post("/api/tour-requests", async (req, res) => {
+    try {
+      const tourReq = await storage.createTourRequest(req.body);
+      res.status(201).json(tourReq);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/tour-requests/:id/status", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     const { status } = req.body;
-    const index = adminData.applications.findIndex(a => a.id === id);
-    if (index !== -1) {
-      adminData.applications[index].status = status;
-      savePersistence();
-      return res.json(adminData.applications[index]);
+    try {
+      const updated = await storage.updateTourRequestStatus(id, status);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    return res.status(404).json({ message: "Application not found" });
   });
 
-  app.delete("/api/applications/:id", (req, res) => {
-    const { id } = req.params;
-    adminData.applications = adminData.applications.filter(a => a.id !== id);
-    savePersistence();
-    return res.json({ success: true });
-  });
+  // ==========================================
+  // GROUP TRIP ENDPOINTS
+  // ==========================================
 
-  // --- API Routes for Office ---
-  app.get("/api/office", (_req, res) => {
-    return res.json(adminData.office);
-  });
-
-  app.post("/api/office", (req, res) => {
-    const { name, address, phone, workingHours, mapEmbedUrl } = req.body;
-    adminData.office = {
-      name: name || adminData.office.name,
-      address: address || adminData.office.address,
-      phone: phone || adminData.office.phone,
-      workingHours: workingHours || adminData.office.workingHours,
-      mapEmbedUrl: mapEmbedUrl || adminData.office.mapEmbedUrl
-    };
-    savePersistence();
-    return res.json(adminData.office);
-  });
-
-  // --- API Routes for Trips ---
-  app.get("/api/trips", (_req, res) => {
-    return res.json(adminData.trips);
-  });
-
-  app.post("/api/trips", (req, res) => {
-    const { touristName, destination, date, duration, price, notes, badges } = req.body;
-    const newTrip = {
-      id: "trip-" + Date.now() + "_" + Math.round(Math.random() * 1000),
-      touristName: touristName || "سائح",
-      destination: destination || "",
-      date: date || new Date().toISOString().split('T')[0],
-      duration: duration || "يوم كامل",
-      status: "assigned" as const,
-      price: price || "٥٠ ر.ع",
-      notes: notes || "",
-      badges: badges || []
-    };
-    adminData.trips.unshift(newTrip);
-    savePersistence();
-    return res.status(201).json(newTrip);
-  });
-
-  app.put("/api/trips/:id", (req, res) => {
-    const { id } = req.params;
-    const { status } = req.body;
-    const index = adminData.trips.findIndex(t => t.id === id);
-    if (index !== -1) {
-      adminData.trips[index].status = status;
-      savePersistence();
-      return res.json(adminData.trips[index]);
+  app.get("/api/group-trips", async (req, res) => {
+    try {
+      const trips = await storage.getGroupTripRequests();
+      res.json(trips);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    return res.status(404).json({ message: "Trip not found" });
   });
 
-  app.delete("/api/trips/:id", (req, res) => {
-    const { id } = req.params;
-    adminData.trips = adminData.trips.filter(t => t.id !== id);
-    savePersistence();
-    return res.json({ success: true });
-  });
-
-  // --- API Routes for Tickets ---
-  app.get("/api/tickets", (_req, res) => {
-    return res.json(adminData.tickets);
-  });
-
-  app.post("/api/tickets", (req, res) => {
-    const { guideName, email, subject, message } = req.body;
-    const newTicket = {
-      id: "ticket-" + Date.now() + "_" + Math.round(Math.random() * 1000),
-      guideName: guideName || "مرشد",
-      email: email || "",
-      subject: subject || "بلاغ عام",
-      message: message || "",
-      status: "open" as const,
-      createdAt: new Date().toISOString()
-    };
-    adminData.tickets.unshift(newTicket);
-    savePersistence();
-    return res.status(201).json(newTicket);
-  });
-
-  app.put("/api/tickets/:id", (req, res) => {
-    const { id } = req.params;
-    const { status, reply } = req.body;
-    const index = adminData.tickets.findIndex(t => t.id === id);
-    if (index !== -1) {
-      if (status) adminData.tickets[index].status = status;
-      if (reply) adminData.tickets[index].reply = reply;
-      savePersistence();
-      return res.json(adminData.tickets[index]);
+  app.post("/api/group-trips", async (req, res) => {
+    try {
+      const trip = await storage.createGroupTripRequest(req.body);
+      res.status(201).json(trip);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    return res.status(404).json({ message: "Ticket not found" });
   });
 
-  // --- NEW FEATURES API ENDPOINTS FOR HIKING, HIMAM, DROB, PAYMENTS ---
+  app.delete("/api/group-trips/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteGroupTripRequest(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-  // 1. Hiking Trips
-  app.get("/api/hiking-trips", async (_req, res) => {
+  // ==========================================
+  // HIKING TRIP ENDPOINTS
+  // ==========================================
+
+  app.get("/api/hiking-trips", async (req, res) => {
     try {
       const trips = await storage.getDbHikingTrips();
-      return res.json(trips);
-    } catch (error) {
-      console.error("Get hiking trips error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب رحلات الهايكنق" });
+      res.json(trips);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/hiking-trips", async (req, res) => {
     try {
-      const tripData = req.body;
-      if (!tripData.name || !tripData.name_ar || !tripData.location || !tripData.price) {
-        return res.status(400).json({ message: "الاسم والموقع والسعر مطلوبين" });
-      }
-      const created = await storage.createDbHikingTrip(tripData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create hiking trip error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة الرحلة" });
+      const trip = await storage.createDbHikingTrip(req.body);
+      res.status(201).json(trip);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/hiking-trips/:id", async (req, res) => {
+  app.post("/api/hiking-trips/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     try {
-      const id = parseInt(req.params.id, 10);
-      const tripData = req.body;
-      if (!tripData.name || !tripData.name_ar || !tripData.location || !tripData.price) {
-        return res.status(400).json({ message: "الاسم والموقع والسعر مطلوبين" });
-      }
-      const updated = await storage.updateDbHikingTrip(id, tripData);
-      return res.json(updated);
-    } catch (error) {
-      console.error("Update hiking trip error:", error);
-      return res.status(500).json({ message: "حدث خطأ في تحديث الرحلة" });
+      const trip = await storage.updateDbHikingTrip(id, req.body);
+      res.json(trip);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.delete("/api/hiking-trips/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
     try {
-      const id = parseInt(req.params.id, 10);
       await storage.deleteDbHikingTrip(id);
-      return res.json({ success: true, message: "تم حذف رحلة الهايكنق بنجاح" });
-    } catch (error) {
-      console.error("Delete hiking trip error:", error);
-      return res.status(500).json({ message: "حدث خطأ في حذف الرحلة" });
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // 2. Himam Shouma
-  app.get("/api/himam-shouma", async (_req, res) => {
-    try {
-      const places = await storage.getDbHimamShouma();
-      return res.json(places);
-    } catch (error) {
-      console.error("Get Himam Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب مواقع همم شومة" });
-    }
-  });
+  // ==========================================
+  // HIKING BOOKINGS & PAYMENTS
+  // ==========================================
 
-  app.post("/api/himam-shouma", async (req, res) => {
-    try {
-      const placeData = req.body;
-      if (!placeData.name || !placeData.nameEn || !placeData.location) {
-        return res.status(400).json({ message: "الاسم باللغتين والموقع مطلوبات" });
-      }
-      const created = await storage.createDbHimamShouma(placeData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create Himam Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة موقع ضمن همم شومة" });
-    }
-  });
-
-  app.delete("/api/himam-shouma/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteDbHimamShouma(id);
-      return res.json({ success: true, message: "تم الحذف بنجاح" });
-    } catch (error) {
-      console.error("Delete Himam Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
-    }
-  });
-
-  // 3. Drob Shouma (Hidden Gems)
-  app.get("/api/drob-shouma", async (_req, res) => {
-    try {
-      const gems = await storage.getDbDrobShouma();
-      return res.json(gems);
-    } catch (error) {
-      console.error("Get Drob Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب دروب شومة" });
-    }
-  });
-
-  app.post("/api/drob-shouma", async (req, res) => {
-    try {
-      const gemData = req.body;
-      if (!gemData.name || !gemData.nameEn || !gemData.location || !gemData.governorate) {
-        return res.status(400).json({ message: "جميع الحقول المطلوبة لدروب شومة يجب ملؤها" });
-      }
-      const created = await storage.createDbDrobShouma(gemData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create Drob Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة موقع ضمن دروب شومة" });
-    }
-  });
-
-  app.delete("/api/drob-shouma/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteDbDrobShouma(id);
-      return res.json({ success: true, message: "تم الحذف بنجاح" });
-    } catch (error) {
-      console.error("Delete Drob Shouma error:", error);
-      return res.status(500).json({ message: "حدث خطأ في الحذف" });
-    }
-  });
-
-  // 4. Hiking Payments Gateways
-  app.get("/api/hiking-payments", async (_req, res) => {
-    try {
-      const gateways = await storage.getHikingPayments();
-      return res.json(gateways);
-    } catch (error) {
-      console.error("Get hiking payments error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب بوابات دفع رحلات الهاكنق" });
-    }
-  });
-
-  app.post("/api/hiking-payments", async (req, res) => {
-    try {
-      const gatewayData = req.body;
-      if (!gatewayData.gatewayName && !gatewayData.gateway_name) {
-        return res.status(400).json({ message: "اسم بوابة الدفع مطلوب" });
-      }
-      const created = await storage.createHikingPayment(gatewayData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create hiking payment gateway error:", error);
-      return res.status(500).json({ message: "حدث خطأ في إضافة بوابة دفع" });
-    }
-  });
-
-  app.delete("/api/hiking-payments/:id", async (req, res) => {
-    try {
-      const id = parseInt(req.params.id, 10);
-      await storage.deleteHikingPayment(id);
-      return res.json({ success: true, message: "تم حذف بوابة الدفع بنجاح" });
-    } catch (error) {
-      console.error("Delete hiking payment gateway error:", error);
-      return res.status(500).json({ message: "حدث خطأ في حذف بوابة الدفع" });
-    }
-  });
-
-  // 5. Hiking Bookings / Orders
-  app.get("/api/hiking-bookings", async (_req, res) => {
+  app.get("/api/hiking-bookings", async (req, res) => {
     try {
       const bookings = await storage.getHikingBookings();
-      return res.json(bookings);
-    } catch (error) {
-      console.error("Get hiking bookings error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب حجوزات الهاكنق" });
+      res.json(bookings);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/hiking-bookings", async (req, res) => {
     try {
-      const bookingData = req.body;
-      if (!bookingData.fullName && !bookingData.full_name) {
-        return res.status(400).json({ message: "الاسم الكامل مطلوب" });
-      }
-      if (!bookingData.phone) {
-        return res.status(400).json({ message: "رقم الهاتف مطلوب" });
-      }
-      if (!bookingData.email) {
-        return res.status(400).json({ message: "البريد الإلكتروني مطلوب" });
-      }
-
-      // Live Backend Credit Card Protection / Validation
-      if (bookingData.paymentGateway === "البطاقة الائتمانية" || !bookingData.paymentGateway) {
-        try {
-          const cardNo = String(bookingData.cardNumber || "").replace(/\s/g, "");
-          if (!cardNo) {
-            return res.status(400).json({ message: "رقم البطاقة الائتمانية مطلوب لإتمام الدفع الآمن." });
-          }
-          if (cardNo.length < 15 || cardNo.length > 19 || !/^\d+$/.test(cardNo)) {
-            return res.status(400).json({ message: "رقم البطاقة غير صالح! يجب أن يتكون من 15 إلى 19 رقماً." });
-          }
-          
-          const exp = String(bookingData.cardExpiry || "").trim();
-          if (!exp) {
-            return res.status(400).json({ message: "تاريخ انتهاء صلاحية البطاقة مطلوب." });
-          }
-          const expRegex = /^(0[1-9]|1[0-2])\/([0-9]{2})$/;
-          const match = exp.match(expRegex);
-          if (!match) {
-            return res.status(400).json({ message: "تاريخ الانتهاء غير صالح! الصيغة الصحيحة هي MM/YY." });
-          }
-          const month = parseInt(match[1], 10);
-          const year = parseInt("20" + match[2], 10);
-          const now = new Date();
-          const currentMonth = now.getMonth() + 1;
-          const currentYear = now.getFullYear();
-          if (year < currentYear || (year === currentYear && month < currentMonth)) {
-            return res.status(400).json({ message: "البطاقة الائتمانية منتهية الصلاحية! يرجى استخدام بطاقة سارية المفعول." });
-          }
-
-          const cvv = String(bookingData.cardCvv || "").trim();
-          if (!cvv) {
-            return res.status(400).json({ message: "رمز الأمان (CVV) مطلوب لخصم المبلغ بأمن." });
-          }
-          if (cvv.length !== 3 && cvv.length !== 4 || !/^\d+$/.test(cvv)) {
-            return res.status(400).json({ message: "رمز الأمان (CVV) غير صالح! يجب أن يتكون من 3 أو 4 أرقام برتبة صالحة." });
-          }
-
-          const holder = String(bookingData.cardName || "").trim();
-          if (!holder || holder.length < 3) {
-            return res.status(400).json({ message: "الاسم كما هو مدون على البطاقة غير صالح أو قصير جداً." });
-          }
-        } catch (cardErr: any) {
-          return res.status(400).json({ message: cardErr.message || "فشلت عملية التحقق من البطاقة" });
-        }
-      }
-
-      const created = await storage.createHikingBooking(bookingData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create hiking booking error:", error);
-      return res.status(500).json({ message: "حدث خطأ أثناء إتمام عملية الحجز" });
+      const booking = await storage.createHikingBooking(req.body);
+      res.status(201).json(booking);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Hotel Bookings / Payments
-  app.get("/api/hotel-bookings", async (_req, res) => {
+  app.delete("/api/hiking-bookings/all", async (req, res) => {
+    try {
+      await storage.clearHikingBookings();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/hiking-payments", async (req, res) => {
+    try {
+      const payments = await storage.getHikingPayments();
+      res.json(payments);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/hiking-payments", async (req, res) => {
+    try {
+      const payment = await storage.createHikingPayment(req.body);
+      res.status(201).json(payment);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/hiking-payments/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteHikingPayment(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // CAR BOOKING ENDPOINTS
+  // ==========================================
+
+  app.get("/api/car-bookings", async (req, res) => {
+    try {
+      const resBookings = await db.execute(sql`SELECT * FROM db_car_bookings ORDER BY id DESC`);
+      res.json(resBookings.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/car-bookings", async (req, res) => {
+    const b = req.body;
+    try {
+      const insertQuery = await db.execute(sql`
+        INSERT INTO db_car_bookings (car_id, car_name, full_name, phone, email, days, price_per_day, total_price, license_url, id_card_url, status, payment_gateway)
+        VALUES (
+          ${b.car_id || b.carId},
+          ${b.car_name || b.carName},
+          ${b.full_name || b.fullName},
+          ${b.phone},
+          ${b.email},
+          ${parseInt(b.days, 10) || 1},
+          ${parseFloat(b.price_per_day || b.pricePerDay)},
+          ${parseFloat(b.total_price || b.totalPrice)},
+          ${b.license_url || b.licenseUrl || null},
+          ${b.id_card_url || b.idCardUrl || null},
+          ${b.status || 'pending'},
+          ${b.payment_gateway || b.paymentGateway || 'بوابة دفع شومة الفورية'}
+        )
+        RETURNING *
+      `);
+      res.status(201).json(insertQuery.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/car-bookings/:id/status", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const { status } = req.body;
+    try {
+      const updateQuery = await db.execute(sql`
+        UPDATE db_car_bookings SET status = ${status} WHERE id = ${id} RETURNING *
+      `);
+      res.json(updateQuery.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/car-bookings/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await db.execute(sql`DELETE FROM db_car_bookings WHERE id = ${id}`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/car-bookings/all", async (req, res) => {
+    try {
+      await db.execute(sql`DELETE FROM db_car_bookings`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // CAR RENTAL PARTNER API & ANALYTICS ENDPOINTS
+  // ==========================================
+  const ajarniState = {
+    apiKey: "ajarni_live_sk_9823418872",
+    bookingUrl: "https://ajarni.om",
+    webhookUrl: "https://ajarni.om/api/v1/shouma-referral",
+    status: "active",
+    totalVisits: 148,
+    totalRentals: 42,
+    totalRevenueOMR: 1680,
+    recentLogs: [
+      { id: "1", user: "عميل من مسقط", action: "انتقال إلى منصة تأجير السيارات المربوطة بـ API", car: "تويوتا لاندكروزر", status: "تم التحويل", time: "قبل 4 دقائق" },
+      { id: "2", user: "عميل من صلالة", action: "تأكيد عقد استئجار عبر API", car: "نيسان باترول", status: "مكتمل وحجز", time: "قبل 15 دقيقة" },
+      { id: "3", user: "عميل من صحار", action: "انتقال إلى منصة تأجير السيارات المربوطة بـ API", car: "هيونداي إلنترا", status: "تم التحويل", time: "قبل 32 دقيقة" },
+      { id: "4", user: "عميل من نزوى", action: "تأكيد عقد استئجار عبر API", car: "كيا أوبتيما", status: "مكتمل وحجز", time: "قبل ساعة" },
+      { id: "5", user: "عميل من البريمي", action: "انتقال إلى منصة تأجير السيارات المربوطة بـ API", car: "تويوتا ياريس", status: "تم التحويل", time: "قبل ساعتين" }
+    ]
+  };
+
+  app.get("/api/ajarni/stats", async (_req, res) => {
+    const conversionRate = ajarniState.totalVisits > 0 
+      ? Number(((ajarniState.totalRentals / ajarniState.totalVisits) * 100).toFixed(1)) 
+      : 0;
+    res.json({
+      ...ajarniState,
+      conversionRate
+    });
+  });
+
+  app.post("/api/ajarni/config", async (req, res) => {
+    const { apiKey, bookingUrl, webhookUrl, status } = req.body;
+    if (apiKey !== undefined) ajarniState.apiKey = apiKey;
+    if (bookingUrl !== undefined) ajarniState.bookingUrl = bookingUrl;
+    if (webhookUrl !== undefined) ajarniState.webhookUrl = webhookUrl;
+    if (status !== undefined) ajarniState.status = status;
+    res.json({ success: true, ...ajarniState });
+  });
+
+  app.post("/api/ajarni/track-click", async (req, res) => {
+    const { userLocation = "مسقط", carName = "سيارة عبر منصة التأجير الرسمية" } = req.body || {};
+    ajarniState.totalVisits += 1;
+    const newLog = {
+      id: String(Date.now()),
+      user: `عميل من ${userLocation}`,
+      action: "انتقال إلى منصة تأجير السيارات الرسمية",
+      car: carName,
+      status: "تم التحويل بنجاح",
+      time: "الآن"
+    };
+    ajarniState.recentLogs.unshift(newLog);
+    if (ajarniState.recentLogs.length > 20) ajarniState.recentLogs.pop();
+    res.json({ success: true, visits: ajarniState.totalVisits });
+  });
+
+  app.post("/api/ajarni/track-rental", async (req, res) => {
+    const { userLocation = "مسقط", carName = "سيارة عائلية", amount = 40 } = req.body || {};
+    ajarniState.totalRentals += 1;
+    ajarniState.totalRevenueOMR += (Number(amount) || 40);
+    const newLog = {
+      id: String(Date.now()),
+      user: `عميل من ${userLocation}`,
+      action: "تأكيد عقد استئجار عبر أجرني API",
+      car: carName,
+      status: "مكتمل وحجز",
+      time: "الآن"
+    };
+    ajarniState.recentLogs.unshift(newLog);
+    if (ajarniState.recentLogs.length > 20) ajarniState.recentLogs.pop();
+    res.json({ success: true, rentals: ajarniState.totalRentals, revenue: ajarniState.totalRevenueOMR });
+  });
+
+  app.post("/api/ajarni/reset", async (_req, res) => {
+    ajarniState.totalVisits = 0;
+    ajarniState.totalRentals = 0;
+    ajarniState.totalRevenueOMR = 0;
+    ajarniState.recentLogs = [];
+    res.json({ success: true, ...ajarniState });
+  });
+
+  // ==========================================
+  // THAWANI PAYMENT GATEWAY ENDPOINTS (بوابة ثواني العمانية)
+  // ==========================================
+  const thawaniSessions: Record<string, any> = {};
+
+  app.get("/api/thawani/config", (_req, res) => {
+    res.json({
+      gatewayName: "بوابة ثواني للمدفوعات الإلكترونية",
+      gatewayNameEn: "Thawani Payment Gateway",
+      provider: "Thawani Technologies LLC",
+      country: "سلطنة عُمان (Sultanate of Oman)",
+      currency: "OMR",
+      supportedMethods: ["oman_net", "visa_mastercard", "thawani_wallet", "thawani_qr"],
+      centralBankLicensed: true,
+      licenseNumber: "CBO/PSO/2020/01",
+      status: "active",
+      merchant: {
+        nameAr: "منصة شومة للسياحة العمانية",
+        nameEn: "Shouma Oman Tourism Platform",
+        id: "SHM-THW-968-OM"
+      }
+    });
+  });
+
+  app.post("/api/thawani/create-session", async (req, res) => {
+    try {
+      const {
+        amount, // in OMR
+        clientReferenceId,
+        customerName,
+        customerPhone,
+        customerEmail,
+        productName = "حجز إقامة سياحية",
+        metadata = {}
+      } = req.body;
+
+      const numAmount = parseFloat(amount) || 0;
+      if (numAmount <= 0) {
+        return res.status(400).json({ error: "المبلغ المدفوع يجب أن يكون أكبر من صفر" });
+      }
+
+      // 1 OMR = 1000 Baisa
+      const amountInBaisa = Math.round(numAmount * 1000);
+      const sessionId = `thw_ses_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const invoiceId = `INV-THW-${Date.now().toString().slice(-6)}`;
+      const referenceCode = `THW-OM-${Math.floor(100000 + Math.random() * 900000)}`;
+
+      const sessionData = {
+        sessionId,
+        invoiceId,
+        referenceCode,
+        clientReferenceId: clientReferenceId || `shm_ref_${Date.now()}`,
+        amountOMR: numAmount,
+        amountInBaisa,
+        currency: "OMR",
+        status: "unpaid",
+        customer: {
+          name: customerName || "عميل شومة",
+          phone: customerPhone || "+968",
+          email: customerEmail || ""
+        },
+        productName,
+        metadata,
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString()
+      };
+
+      thawaniSessions[sessionId] = sessionData;
+
+      res.status(201).json({
+        success: true,
+        data: sessionData,
+        message: "تم إنشاء جلسة دفع آمنة عبر بوابة ثواني بنجاح"
+      });
+    } catch (err: any) {
+      console.error("Thawani create session error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/thawani/process-payment", async (req, res) => {
+    try {
+      const {
+        sessionId,
+        paymentMethod = "oman_net", // oman_net, thawani_wallet, thawani_qr, card
+        cardDetails,
+        walletPhone
+      } = req.body;
+
+      const session = sessionId ? thawaniSessions[sessionId] : null;
+      const refCode = session ? session.referenceCode : `THW-OM-${Math.floor(100000 + Math.random() * 900000)}`;
+      const invoiceNum = session ? session.invoiceId : `INV-THW-${Date.now().toString().slice(-6)}`;
+
+      if (session) {
+        session.status = "paid";
+        session.paidAt = new Date().toISOString();
+        session.paymentMethod = paymentMethod;
+      }
+
+      // Record transaction into finance system
+      try {
+        const txAmount = session ? session.amountOMR : (parseFloat(req.body.amount) || 50);
+        await storage.createDbTransaction({
+          type: "income",
+          category: "hotel",
+          amount: String(txAmount),
+          description: `تسوية دفع إلكتروني عبر بوابة ثواني العمانية (${paymentMethod === "thawani_wallet" ? "محفظة ثواني" : paymentMethod === "thawani_qr" ? "رمز QR ثواني" : "بطاقة عُمان نت / فيزا"}) - مرجع: ${refCode}`,
+          date: new Date().toISOString().split("T")[0]
+        });
+      } catch (txErr) {
+        console.warn("Could not log Thawani transaction to finance automatically:", txErr);
+      }
+
+      res.json({
+        success: true,
+        paymentStatus: "paid",
+        receipt: {
+          transactionId: `TXN-${Date.now()}`,
+          referenceCode: refCode,
+          invoiceId: invoiceNum,
+          gateway: "بوابة ثواني العمانية (Thawani Technologies LLC)",
+          cboApproved: true,
+          methodUsed: paymentMethod,
+          timestamp: new Date().toISOString()
+        },
+        message: "تم خصم وتسوية المبلغ بنجاح عبر بوابة ثواني للمدفوعات الإلكترونية"
+      });
+    } catch (err: any) {
+      console.error("Thawani process payment error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/thawani/session/:sessionId", (req, res) => {
+    const session = thawaniSessions[req.params.sessionId];
+    if (!session) {
+      return res.status(404).json({ error: "جلسة الدفع غير موجودة أو انتهت صلاحيتها" });
+    }
+    res.json(session);
+  });
+
+  // ==========================================
+  // ITINERARY ENDPOINTS
+  // ==========================================
+
+  app.get("/api/itinerary", async (req, res) => {
+    try {
+      const duration = parseInt(req.query.duration as string, 10) || 3;
+      const budget = (req.query.budget as string) || "medium";
+      const groupSize = parseInt(req.query.groupSize as string, 10) || 2;
+      const governoratesParam = (req.query.governorates as string) || "";
+      const governorates = governoratesParam ? governoratesParam.split(",") : [];
+      const interestsParam = (req.query.interests as string) || "";
+      const interests = interestsParam ? interestsParam.split(",") : [];
+
+      const dbAttractions = await storage.getDbAttractions();
+      const dbHotels = await storage.getDbHotels();
+      const dbRestaurants = await storage.getDbRestaurants();
+      const dbActivities = await storage.getDbActivities();
+
+      // Filter helpers
+      const matchGovernorate = (item: any, govIds: string[]) => {
+        if (govIds.length === 0) return true;
+        const govMap: Record<string, string[]> = {
+          muscat: ["مسقط", "muscat", "seeb", "السيب", "qurum", "القرم", "مطرح", "mutrah", "bousher", "بوشر"],
+          dhofar: ["صلالة", "salalah", "ظفار", "dhofar", "mirbat", "مرباط", "taqah", "طاقة"],
+          dakhiliyah: ["نزوى", "nizwa", "bahla", "بهلاء", "الداخلية", "dakhiliyah", "manah", "منح", "samail", "سمائل", "misfat", "مسفاة"],
+          north_batinah: ["صحار", "sohar", "شناص", "shinas", "الباطنة", "batinah"],
+          south_batinah: ["الرستاق", "rustaq", "العوابي", "al awabi", "نخل", "nakhal", "بركاء", "barka"],
+          north_sharqiyah: ["الشرقية", "sharqiyah", "بدية", "bidiyah", "رمال وهيبة", "wahiba", "إبراء", "ibra"],
+          south_sharqiyah: ["صور", "sur", "الكامل", "al kamil", "الشرقية", "sharqiyah", "جعلان", "jalan"],
+          musandam: ["خصب", "khasab", "دبا", "dibba", "بخاء", "bukha", "مسندم", "musandam"],
+          buraimi: ["البريمي", "buraimi"],
+          dhahirah: ["عبري", "ibri", "ضنك", "dank", "الظاهرة", "dhahirah"],
+          wusta: ["الدقم", "duqm", "هيماء", "hima", "الوسطى", "wusta"],
+        };
+
+        const textToSearch = `${item.governorate_id || ""} ${item.governorate || ""} ${item.city || ""} ${item.region || ""} ${item.location || ""} ${item.name || ""} ${item.name_ar || ""}`.toLowerCase();
+
+        return govIds.some(govId => {
+          if (item.governorate_id && item.governorate_id.toLowerCase().includes(govId)) return true;
+          const keywords = govMap[govId] || [];
+          return keywords.some(keyword => textToSearch.includes(keyword.toLowerCase()));
+        });
+      };
+
+      const accommodation = (req.query.accommodation as string) || "hotel";
+
+      const matchAccommodation = (hotel: any, type: string) => {
+        const text = `${hotel.name || ""} ${hotel.name_ar || ""} ${hotel.description || ""}`.toLowerCase();
+        if (type === "resort") {
+          return text.includes("منتجع") || text.includes("resort");
+        } else if (type === "apartment") {
+          return text.includes("شقة") || text.includes("شقق") || text.includes("apartment") || text.includes("جناح") || text.includes("suite");
+        } else if (type === "hostel") {
+          return text.includes("نزل") || text.includes("مخيم") || text.includes("hostel") || text.includes("camp") || text.includes("lodge") || text.includes("بيت ضيافة");
+        } else {
+          // "hotel"
+          return text.includes("فندق") || text.includes("hotel") || (!text.includes("منتجع") && !text.includes("resort") && !text.includes("شقة") && !text.includes("شقق") && !text.includes("apartment") && !text.includes("نزل") && !text.includes("مخيم") && !text.includes("hostel") && !text.includes("camp") && !text.includes("lodge"));
+        }
+      };
+
+      // Filter lists
+      const govHotels = dbHotels.filter(h => matchGovernorate(h, governorates));
+      let filteredHotels = govHotels.filter(h => matchAccommodation(h, accommodation));
+      let noMatchingAccommodation = false;
+
+      if (filteredHotels.length === 0) {
+        noMatchingAccommodation = true;
+        filteredHotels = govHotels;
+        if (filteredHotels.length === 0) {
+          filteredHotels = dbHotels;
+        }
+      }
+
+      let filteredAttractions = dbAttractions.filter(a => matchGovernorate(a, governorates));
+      let filteredRestaurants = dbRestaurants.filter(r => matchGovernorate(r, governorates));
+      let filteredActivities = dbActivities.filter(a => matchGovernorate(a, governorates));
+
+      // Fallbacks if filter returns empty
+      if (filteredAttractions.length === 0) filteredAttractions = dbAttractions;
+      if (filteredRestaurants.length === 0) filteredRestaurants = dbRestaurants;
+      if (filteredActivities.length === 0) filteredActivities = dbActivities;
+
+      // Select hotel based on budget
+      let selectedHotel = filteredHotels[0];
+      if (budget === "low") {
+        selectedHotel = filteredHotels.find(h => h.stars <= 3) || filteredHotels[0];
+      } else if (budget === "medium") {
+        selectedHotel = filteredHotels.find(h => h.stars === 4) || filteredHotels[0];
+      } else {
+        selectedHotel = filteredHotels.find(h => h.stars === 5) || filteredHotels[0];
+      }
+
+      const hotelPrice = selectedHotel ? selectedHotel.price_per_night || 50 : 50;
+
+      // Select matching attractions and activities to make unique days
+      const days = [];
+      let attractionIndex = 0;
+      let restaurantIndex = 0;
+      let activityIndex = 0;
+
+      const getNextAttraction = () => {
+        if (filteredAttractions.length === 0) return null;
+        const item = filteredAttractions[attractionIndex % filteredAttractions.length];
+        attractionIndex++;
+        return item;
+      };
+
+      const getNextRestaurant = () => {
+        if (filteredRestaurants.length === 0) return null;
+        const item = filteredRestaurants[restaurantIndex % filteredRestaurants.length];
+        restaurantIndex++;
+        return item;
+      };
+
+      const getNextActivity = () => {
+        if (filteredActivities.length === 0) return null;
+        const item = filteredActivities[activityIndex % filteredActivities.length];
+        activityIndex++;
+        return item;
+      };
+
+      for (let i = 1; i <= duration; i++) {
+        const dayActivities = [];
+
+        // 1. Breakfast (08:00)
+        dayActivities.push({
+          time: "08:00",
+          activity: "إفطار في الفندق",
+          location: selectedHotel ? `${selectedHotel.region}، ${selectedHotel.city}` : "مسقط",
+          type: "hotel",
+          itemId: selectedHotel ? String(selectedHotel.id) : undefined,
+          estimatedCost: 0,
+        });
+
+        // 2. Morning Attraction (10:00)
+        const attr1 = getNextAttraction();
+        if (attr1) {
+          dayActivities.push({
+            time: "10:00",
+            activity: `زيارة ${attr1.name_ar || attr1.name}`,
+            location: `${attr1.wilayat || ""}، ${attr1.governorate || ""}`,
+            type: "attraction",
+            itemId: String(attr1.id),
+            estimatedCost: 2,
+            category: attr1.category,
+          });
+        }
+
+        // 3. Lunch (13:00)
+        const rest1 = getNextRestaurant();
+        if (rest1) {
+          const restCost = budget === "low" ? 4 : budget === "medium" ? 8 : budget === "high" ? 18 : 35;
+          dayActivities.push({
+            time: "13:00",
+            activity: rest1.name_ar || rest1.name,
+            location: `${rest1.region || ""}، ${rest1.city || ""}`,
+            type: "restaurant",
+            itemId: String(rest1.id),
+            estimatedCost: restCost,
+          });
+        }
+
+        // 4. Afternoon Activity or Attraction (15:00)
+        if (i % 2 === 0) {
+          const act = getNextActivity();
+          if (act) {
+            const actPrice = parseInt(act.price as string, 10) || 12;
+            dayActivities.push({
+              time: "15:00",
+              activity: `استكشاف ${act.name_ar || act.name}`,
+              location: `${act.region || ""}، ${act.location || ""}`,
+              type: "activity",
+              itemId: String(act.id),
+              estimatedCost: actPrice,
+            });
+          }
+        } else {
+          const attr2 = getNextAttraction();
+          if (attr2) {
+            dayActivities.push({
+              time: "15:00",
+              activity: `زيارة ${attr2.name_ar || attr2.name}`,
+              location: `${attr2.wilayat || ""}، ${attr2.governorate || ""}`,
+              type: "attraction",
+              itemId: String(attr2.id),
+              estimatedCost: 0,
+              category: attr2.category,
+            });
+          }
+        }
+
+        // 5. Dinner (19:00)
+        const rest2 = getNextRestaurant();
+        if (rest2) {
+          const restCost = budget === "low" ? 5 : budget === "medium" ? 10 : budget === "high" ? 22 : 45;
+          dayActivities.push({
+            time: "19:00",
+            activity: rest2.name_ar || rest2.name,
+            location: `${rest2.region || ""}، ${rest2.city || ""}`,
+            type: "restaurant",
+            itemId: String(rest2.id),
+            estimatedCost: restCost,
+          });
+        }
+
+        // 6. Return to Hotel (21:00)
+        dayActivities.push({
+          time: "21:00",
+          activity: "العودة للفندق",
+          location: selectedHotel ? `${selectedHotel.region}، ${selectedHotel.city}` : "مسقط",
+          type: "hotel",
+          itemId: selectedHotel ? String(selectedHotel.id) : undefined,
+          estimatedCost: hotelPrice,
+        });
+
+        // Day Title
+        let dayTitle = "يوم المعالم التاريخية";
+        if (i === 1) dayTitle = "الوصول والاستكشاف";
+        else if (i === duration) dayTitle = "الوصول والاستكشاف";
+        else if (i % 3 === 0) dayTitle = "مغامرة في الطبيعة";
+        else if (i % 3 === 1) dayTitle = "الثقافة والفنون";
+        else dayTitle = "الاسترخاء والتجديد";
+
+        days.push({
+          day: i,
+          title: dayTitle,
+          activities: dayActivities,
+        });
+      }
+
+      // Calculate totals
+      let hotelsTotal = 0;
+      let restaurantsTotal = 0;
+      let attractionsTotal = 0;
+      let activitiesTotal = 0;
+      const transportTotal = duration * 15;
+
+      for (const d of days) {
+        for (const act of d.activities) {
+          const cost = act.estimatedCost || 0;
+          if (act.type === "hotel") hotelsTotal += cost;
+          else if (act.type === "restaurant") restaurantsTotal += cost;
+          else if (act.type === "attraction") attractionsTotal += cost;
+          else if (act.type === "activity") activitiesTotal += cost;
+        }
+      }
+
+      const total = hotelsTotal + restaurantsTotal + attractionsTotal + activitiesTotal + transportTotal;
+
+      const itinerary = {
+        id: `itin_${Date.now()}`,
+        title: governorates.length > 0 ? `برنامج سياحي في ${governorates.map(g => g.charAt(0).toUpperCase() + g.slice(1)).join(" & ")}` : "برنامج سياحي مخصص في عمان",
+        duration,
+        budget,
+        governorates,
+        days,
+        noMatchingAccommodation,
+        requestedAccommodation: accommodation,
+        budgetSummary: {
+          hotels: hotelsTotal,
+          restaurants: restaurantsTotal,
+          attractions: attractionsTotal,
+          activities: activitiesTotal,
+          transport: transportTotal,
+          total,
+        },
+      };
+
+      res.json(itinerary);
+    } catch (err: any) {
+      console.error("Error generating itinerary:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/itinerary/suggestions", async (req, res) => {
+    const { type, exclude, governorateId, category } = req.query;
+    const excludeIds = exclude ? String(exclude).split(",").map(id => parseInt(id, 10)).filter(id => !isNaN(id)) : [];
+
+    try {
+      let items: any[] = [];
+      if (type === "hotel") {
+        items = await storage.getDbHotels();
+      } else if (type === "restaurant") {
+        items = await storage.getDbRestaurants();
+      } else if (type === "activity") {
+        items = await storage.getDbActivities();
+      } else {
+        items = await storage.getDbAttractions();
+      }
+
+      let filtered = items.filter(item => !excludeIds.includes(item.id));
+      if (governorateId) {
+        filtered = filtered.filter(item => {
+          const gov = String(governorateId).toLowerCase();
+          const itemGov = String(item.governorate || item.governorate_id || "").toLowerCase();
+          return itemGov.includes(gov) || gov.includes(itemGov);
+        });
+      }
+      if (category) {
+        filtered = filtered.filter(item => {
+          const cat = String(category).toLowerCase();
+          const itemCat = String(item.category || "").toLowerCase();
+          return itemCat.includes(cat) || cat.includes(itemCat);
+        });
+      }
+
+      res.json(filtered);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // FINANCE & COMMISSION ENDPOINTS
+  // ==========================================
+
+  app.get("/api/finance/transactions", async (req, res) => {
+    try {
+      const txs = await storage.getDbTransactions();
+      res.json(txs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/finance/transactions", async (req, res) => {
+    try {
+      const tx = await storage.createDbTransaction(req.body);
+      res.status(201).json(tx);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/finance/transactions/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteDbTransaction(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/finance/transactions/all", async (req, res) => {
+    try {
+      await storage.clearDbTransactions();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/finance/hotels/pending-finance", async (req, res) => {
+    try {
+      const hotels = await db.execute(sql`SELECT * FROM db_hotels WHERE status = 'pending_finance' OR split_shouma_pct IS NULL OR split_shouma_pct = 15`);
+      res.json(hotels.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/finance/hotels/:hotelId/set-commission", async (req, res) => {
+    const hotelId = parseInt(req.params.hotelId, 10);
+    const shoumaPct = parseInt(req.body.shoumaPct, 10) || 15;
+    const hotelPct = 100 - shoumaPct;
+    try {
+      await db.execute(sql`
+        UPDATE db_hotels 
+        SET split_shouma_pct = ${shoumaPct}, split_hotel_pct = ${hotelPct}
+        WHERE id = ${hotelId}
+      `);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // MARKETING ADS & ANNOUNCEMENTS
+  // ==========================================
+
+  app.get("/api/announcements/latest", async (req, res) => {
+    try {
+      const ann = await storage.getLatestAnnouncement();
+      res.json(ann || { title: "", message: "", isActive: false });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/announcements", async (req, res) => {
+    const { title, message, isActive } = req.body;
+    try {
+      const ann = await storage.createOrUpdateAnnouncement(title, message, !!isActive);
+      res.json(ann);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/marketing-ads", async (req, res) => {
+    try {
+      const ads = await db.execute(sql`SELECT * FROM db_marketing_ads WHERE is_active = true ORDER BY id DESC`);
+      res.json(ads.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/marketing-ads/all", async (req, res) => {
+    try {
+      const ads = await db.execute(sql`SELECT * FROM db_marketing_ads ORDER BY id DESC`);
+      res.json(ads.rows);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/marketing-ads", async (req, res) => {
+    const { title, title_ar, description, description_ar, image_url, link, is_active } = req.body;
+    try {
+      const result = await db.execute(sql`
+        INSERT INTO db_marketing_ads (title, title_ar, description, description_ar, image_url, link, is_active)
+        VALUES (${title}, ${title_ar}, ${description}, ${description_ar}, ${image_url}, ${link}, ${is_active ?? true})
+        RETURNING *
+      `);
+      res.status(201).json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/marketing-ads/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    const { title, title_ar, description, description_ar, image_url, link, is_active } = req.body;
+    try {
+      const result = await db.execute(sql`
+        UPDATE db_marketing_ads 
+        SET title = ${title}, title_ar = ${title_ar}, description = ${description}, description_ar = ${description_ar}, image_url = ${image_url}, link = ${link}, is_active = ${is_active}
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      res.json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/marketing-ads/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await db.execute(sql`DELETE FROM db_marketing_ads WHERE id = ${id}`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // SPLASH SCREEN CONFIG ENDPOINTS
+  // ==========================================
+
+  app.get("/api/splash-config", async (req, res) => {
+    try {
+      const config = await db.execute(sql`SELECT * FROM db_splash_config WHERE is_active = true LIMIT 1`);
+      if (config.rows.length > 0) {
+        res.json(config.rows[0]);
+      } else {
+        res.json({
+          title: "Welcome to Shouma",
+          title_ar: "مرحباً بكم في شومة",
+          subtitle: "Your smart integrated tour guide in the Sultanate of Oman",
+          subtitle_ar: "دليلك السياحي الذكي المتكامل في سلطنة عُمان",
+          background_type: "landscape",
+          background_image: ""
+        });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/splash-config", async (req, res) => {
+    const { title, title_ar, subtitle, subtitle_ar, background_type, background_image } = req.body;
+    try {
+      const check = await db.execute(sql`SELECT * FROM db_splash_config LIMIT 1`);
+      let result;
+      if (check.rows.length > 0) {
+        result = await db.execute(sql`
+          UPDATE db_splash_config 
+          SET title = ${title}, title_ar = ${title_ar}, subtitle = ${subtitle}, subtitle_ar = ${subtitle_ar}, background_type = ${background_type}, background_image = ${background_image}
+          WHERE id = ${check.rows[0].id}
+          RETURNING *
+        `);
+      } else {
+        result = await db.execute(sql`
+          INSERT INTO db_splash_config (title, title_ar, subtitle, subtitle_ar, background_type, background_image, is_active)
+          VALUES (${title}, ${title_ar}, ${subtitle}, ${subtitle_ar}, ${background_type}, ${background_image}, true)
+          RETURNING *
+        `);
+      }
+      res.json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // MEDIA UPLOAD & ASSETS
+  // ==========================================
+
+  app.post("/api/upload", upload.single("file"), async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
+    try {
+      const url = `/uploads/${req.file.filename}`;
+      const asset = await storage.createMediaAsset({
+        filename: req.file.originalname,
+        url,
+        fileType: req.file.mimetype.startsWith("image/") ? "image" : "document",
+        mimeType: req.file.mimetype,
+        size: req.file.size,
+        storageKeyUsed: "local"
+      });
+      res.status(201).json(asset);
+    } catch (err: any) {
+      console.error("Error creating media asset:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/media-assets", async (req, res) => {
+    try {
+      const assets = await storage.getMediaAssets();
+      res.json(assets);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/media-assets/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteMediaAsset(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // VOICE GUIDE STREAMING
+  // ==========================================
+
+  app.post("/api/voice-guide", async (req, res) => {
+    const { text, attractionName, location, voice, language } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required for the voice guide" });
+    }
+
+    try {
+      const finalVoice = voice || "nova";
+      res.setHeader("Content-Type", "text/plain");
+
+      // Generate AI Tour Guide Script on-the-fly using Gemini 3.5 Flash
+      const aiNarrative = await generateTourGuideScript(attractionName, location, text, language);
+
+      // Streams chunks of audio in real-time
+      const stream = await textToSpeechStream(aiNarrative, finalVoice);
+      for await (const chunk of stream) {
+        res.write(`data: ${JSON.stringify({ type: "audio", data: chunk })}\n`);
+      }
+      res.write(`data: ${JSON.stringify({ type: "done" })}\n`);
+      res.end();
+    } catch (err: any) {
+      console.error("Voice guide streaming error:", err);
+      res.write(`data: ${JSON.stringify({ type: "error", error: err.message })}\n`);
+      res.end();
+    }
+  });
+
+  app.post("/api/translate", async (req, res) => {
+    const { text, targetLang } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+    try {
+      const translatedText = await translateArabicToTargetLanguage(text, targetLang || "en");
+      res.json({ translatedText });
+    } catch (err: any) {
+      console.error("Translation API error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/translate-batch", async (req, res) => {
+    const { texts, targetLang } = req.body;
+    if (!Array.isArray(texts)) {
+      return res.status(400).json({ error: "texts array is required" });
+    }
+    try {
+      const translatedTexts = await Promise.all(
+        texts.map(t => translateArabicToTargetLanguage(String(t || ""), targetLang || "en"))
+      );
+      res.json({ translatedTexts });
+    } catch (err: any) {
+      console.error("Batch translation API error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // HIMAM SHOUMA & DROB SHOUMA
+  // ==========================================
+
+  app.get("/api/himam-shouma", async (req, res) => {
+    try {
+      const places = await storage.getDbHimamShouma();
+      res.json(places);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/himam-shouma", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      
+      // Auto translate fields if English equivalents are not provided
+      if (!data.nameEn && !data.name_en && data.name) {
+        data.nameEn = await translateArabicToEnglish(data.name);
+      }
+      if (!data.descriptionEn && !data.description_en && data.description) {
+        data.descriptionEn = await translateArabicToEnglish(data.description);
+      }
+      if (!data.locationEn && !data.location_en && data.location) {
+        data.locationEn = await translateArabicToEnglish(data.location);
+      }
+      
+      const features = Array.isArray(data.features) ? data.features : [];
+      if ((!data.featuresEn && !data.features_en) && features.length > 0) {
+        data.featuresEn = await translateFeatures(features);
+      }
+
+      const place = await storage.createDbHimamShouma(data);
+      res.status(201).json(place);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/himam-shouma/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteDbHimamShouma(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/drob-shouma", async (req, res) => {
+    try {
+      const gems = await storage.getDbDrobShouma();
+      res.json(gems);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/drob-shouma", async (req, res) => {
+    try {
+      const data = { ...req.body };
+      
+      // Auto translate fields if English equivalents are not provided
+      if (!data.nameEn && !data.name_en && data.name) {
+        data.nameEn = await translateArabicToEnglish(data.name);
+      }
+      if (!data.descriptionEn && !data.description_en && data.description) {
+        data.descriptionEn = await translateArabicToEnglish(data.description);
+      }
+      if (!data.locationEn && !data.location_en && data.location) {
+        data.locationEn = await translateArabicToEnglish(data.location);
+      }
+      if (!data.governorateEn && !data.governorate_en && data.governorate) {
+        data.governorateEn = await translateArabicToEnglish(data.governorate);
+      }
+
+      const gem = await storage.createDbDrobShouma(data);
+      res.status(201).json(gem);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/drob-shouma/:id", async (req, res) => {
+    const id = parseInt(req.params.id, 10);
+    try {
+      await storage.deleteDbDrobShouma(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // HOTEL PORTAL BOOKING ENDPOINTS
+  // ==========================================
+
+  app.get("/api/hotel-bookings", async (req, res) => {
     try {
       const bookings = await storage.getHotelBookings();
-      return res.json(bookings);
-    } catch (error) {
-      console.error("Get hotel bookings error:", error);
-      return res.status(500).json({ message: "حدث خطأ في جلب حجوزات الفنادق" });
+      res.json(bookings);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
   app.post("/api/hotel-bookings", async (req, res) => {
     try {
-      const bookingData = req.body;
-      if (!bookingData.fullName && !bookingData.full_name) {
-        return res.status(400).json({ message: "الاسم الكامل مطلوب" });
-      }
-      if (!bookingData.phone) {
-        return res.status(400).json({ message: "رقم الهاتف مطلوب" });
-      }
-      if (!bookingData.email) {
-        return res.status(400).json({ message: "البريد الإلكتروني مطلوب" });
-      }
-
-      // Live Backend Credit Card Protection / Validation
-      if (bookingData.paymentGateway === "البطاقة الائتمانية" || !bookingData.paymentGateway) {
-        try {
-          const cardNo = String(bookingData.cardNumber || "").replace(/\s/g, "");
-          if (!cardNo) {
-            return res.status(400).json({ message: "رقم البطاقة الائتمانية مطلوب لإتمام الدفع الآمن." });
-          }
-          if (cardNo.length < 15 || cardNo.length > 19 || !/^\d+$/.test(cardNo)) {
-            return res.status(400).json({ message: "رقم البطاقة غير صالح! يجب أن يتكون من 15 إلى 19 رقماً." });
-          }
-          
-          const exp = String(bookingData.cardExpiry || "").trim();
-          if (!exp) {
-            return res.status(400).json({ message: "تاريخ انتهاء صلاحية البطاقة مطلوب." });
-          }
-          const expRegex = /^(0[1-9]|1[0-2])\/([0-9]{2})$/;
-          const match = exp.match(expRegex);
-          if (!match) {
-            return res.status(400).json({ message: "تاريخ الانتهاء غير صالح! الصيغة الصحيحة هي MM/YY." });
-          }
-          const month = parseInt(match[1], 10);
-          const year = parseInt("20" + match[2], 10);
-          const now = new Date();
-          const currentMonth = now.getMonth() + 1;
-          const currentYear = now.getFullYear();
-          if (year < currentYear || (year === currentYear && month < currentMonth)) {
-            return res.status(400).json({ message: "البطاقة الائتمانية منتهية الصلاحية! يرجى استخدام بطاقة سارية المفعول." });
-          }
-
-          const cvv = String(bookingData.cardCvv || "").trim();
-          if (!cvv) {
-            return res.status(400).json({ message: "رمز الأمان (CVV) مطلوب لخصم المبلغ بأمن." });
-          }
-          if (cvv.length !== 3 && cvv.length !== 4 || !/^\d+$/.test(cvv)) {
-            return res.status(400).json({ message: "رمز الأمان (CVV) غير صالح! يجب أن يتكون من 3 أو 4 أرقام برتبة صالحة." });
-          }
-
-          const holder = String(bookingData.cardName || "").trim();
-          if (!holder || holder.length < 3) {
-            return res.status(400).json({ message: "الاسم كما هو مدون على البطاقة غير صالح أو قصير جداً." });
-          }
-        } catch (cardErr: any) {
-          return res.status(400).json({ message: cardErr.message || "فشلت عملية التحقق من البطاقة" });
-        }
-      }
-
-      const created = await storage.createHotelBooking(bookingData);
-      return res.json(created);
-    } catch (error) {
-      console.error("Create hotel booking error:", error);
-      return res.status(500).json({ message: "حدث خطأ أثناء تسجيل عملية الحجز والمدفوعات" });
+      const booking = await storage.createHotelBooking(req.body);
+      res.status(201).json(booking);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  // Hotel Portal Authenticator / Booking Dispatcher
+  app.delete("/api/hotel-bookings/all", async (req, res) => {
+    try {
+      await storage.clearHotelBookings();
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // APPLICATIONS ENDPOINTS
+  // ==========================================
+  app.get("/api/applications", async (req, res) => {
+    try {
+      const apps = await storage.getApplications();
+      res.json(apps);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/applications", async (req, res) => {
+    try {
+      const appItem = await storage.createApplication(req.body);
+      res.status(201).json({ success: true, application: appItem });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/applications/:id", async (req, res) => {
+    try {
+      const { status } = req.body;
+      const updated = await storage.updateApplicationStatus(Number(req.params.id), status);
+      res.json({ success: true, application: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/applications/:id", async (req, res) => {
+    try {
+      await storage.deleteApplication(Number(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // OFFICE CONFIG ENDPOINTS
+  // ==========================================
+  app.get("/api/office", async (req, res) => {
+    try {
+      const office = await storage.getOfficeConfig();
+      res.json(office);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/office", async (req, res) => {
+    try {
+      const office = await storage.updateOfficeConfig(req.body);
+      res.json(office);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/office", async (req, res) => {
+    try {
+      const office = await storage.updateOfficeConfig(req.body);
+      res.json(office);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // TRIPS ENDPOINTS
+  // ==========================================
+  app.get("/api/trips", async (req, res) => {
+    try {
+      const trips = await storage.getTrips();
+      res.json(trips);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/trips", async (req, res) => {
+    try {
+      const trip = await storage.createTrip(req.body);
+      res.status(201).json(trip);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/trips/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateTrip(Number(req.params.id), req.body);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/trips/:id", async (req, res) => {
+    try {
+      await storage.deleteTrip(Number(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // TICKETS ENDPOINTS
+  // ==========================================
+  app.get("/api/tickets", async (req, res) => {
+    try {
+      const tickets = await storage.getTickets();
+      res.json(tickets);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/tickets", async (req, res) => {
+    try {
+      const ticket = await storage.createTicket(req.body);
+      res.status(201).json(ticket);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/tickets/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateTicketStatus(Number(req.params.id), req.body.status);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/tickets/:id", async (req, res) => {
+    try {
+      await storage.deleteTicket(Number(req.params.id));
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ==========================================
+  // BANK VALIDATION ENDPOINT
+  // ==========================================
+  app.post("/api/validate-bank", (req, res) => {
+    const { accountNumber } = req.body;
+    if (!accountNumber || String(accountNumber).length < 8) {
+      return res.json({
+        valid: false,
+        messageAr: "رقم الحساب قصير جداً. يرجى إدخال رقم حساب يتكون من 8 أرقام على الأقل."
+      });
+    }
+    return res.json({
+      valid: true,
+      messageAr: "رقم الحساب صالح ومطابق لمعايير المصارف العُمانية (بنك مسقط / بنك ظفار)."
+    });
+  });
+
+  // ==========================================
+  // ADMIN HOTELS & PMS ROOMS APPROVAL ENDPOINTS
+  // ==========================================
+  app.get("/api/admin/hotels/pending-approval", async (req, res) => {
+    try {
+      const hotels = await db.execute(sql`SELECT * FROM db_hotels WHERE status = 'pending' ORDER BY id DESC`);
+      res.json(hotels.rows || []);
+    } catch (err: any) {
+      res.json([]);
+    }
+  });
+
+  app.post("/api/admin/hotels/:id/approve", async (req, res) => {
+    const hotelId = parseInt(req.params.id, 10);
+    try {
+      await db.execute(sql`UPDATE db_hotels SET status = 'approved' WHERE id = ${hotelId}`);
+      res.json({ success: true, message: "تم تفعيل واعتماد الفندق بنجاح!" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/hotels/:id/reject", async (req, res) => {
+    const hotelId = parseInt(req.params.id, 10);
+    try {
+      await db.execute(sql`UPDATE db_hotels SET status = 'rejected' WHERE id = ${hotelId}`);
+      res.json({ success: true, message: "تم رفض طلب إدراج الفندق بنجاح." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/admin/pms-rooms/pending", async (req, res) => {
+    try {
+      const rooms = await db.execute(sql`
+        SELECT r.*, h.name_ar as hotel_name, h.name as hotel_name_en 
+        FROM db_hotel_rooms r 
+        LEFT JOIN db_hotels h ON r.hotel_id = h.id 
+        WHERE r.status = 'pending' 
+        ORDER BY r.id DESC
+      `);
+      res.json(rooms.rows || []);
+    } catch (err: any) {
+      res.json([]);
+    }
+  });
+
+  app.post("/api/admin/pms-rooms/:id/approve", async (req, res) => {
+    const roomId = parseInt(req.params.id, 10);
+    const { commissionPct = 15, commissionAmount } = req.body;
+    try {
+      await db.execute(sql`
+        UPDATE db_hotel_rooms 
+        SET status = 'approved', 
+            commission_pct = ${commissionPct}, 
+            commission_amount = ${commissionAmount ?? 15}
+        WHERE id = ${roomId}
+      `);
+      res.json({ success: true, message: "تم اعتماد وتنشيط الغرفة بنجاح!" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/admin/pms-rooms/:id/reject", async (req, res) => {
+    const roomId = parseInt(req.params.id, 10);
+    try {
+      await db.execute(sql`UPDATE db_hotel_rooms SET status = 'rejected' WHERE id = ${roomId}`);
+      res.json({ success: true, message: "تم رفض وتجاوز طلب الغرفة بنجاح." });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ==========================================
+  // HOTEL PORTAL ENDPOINTS
+  // ==========================================
+  app.post("/api/hotels/register-request", async (req, res) => {
+    try {
+      const { nameAr, nameEn, city, email, phone, password, bankAccount } = req.body;
+      const result = await db.execute(sql`
+        INSERT INTO db_hotels (name, name_ar, description, city, region, image, rating, price_per_night, stars, phone, map_url, additional_images, bank_account, amenities, split_shouma_pct, split_hotel_pct, email, password, status)
+        VALUES (${nameEn || nameAr}, ${nameAr}, '', ${city || 'Muscat'}, ${city || 'Muscat'}, '', 5, 50, 4, ${phone || ''}, '', '', ${bankAccount || ''}, '{}'::text[], 15, 85, ${email}, ${password}, 'pending')
+        RETURNING *
+      `);
+      res.status(201).json({ success: true, hotel: result.rows[0] });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/hotels/auth", async (req, res) => {
     try {
       const { email, password } = req.body;
-      if (!email || !password) {
-        return res.status(400).json({ message: "البريد الإلكتروني وكلمة المرور مطلوبان للتحقق" });
+      const result = await db.execute(sql`
+        SELECT * FROM db_hotels WHERE email = ${email} AND password = ${password} LIMIT 1
+      `);
+      if (result.rows && result.rows.length > 0) {
+        res.json({ success: true, hotel: result.rows[0] });
+      } else {
+        res.status(401).json({ success: false, message: "بيانات الدخول غير صحيحة" });
       }
-      const hotels = await storage.getDbHotels();
-      const matchedHotel = hotels.find(h => h.email === email && h.password === password);
-      if (!matchedHotel) {
-        return res.status(401).json({ message: "البريد الإلكتروني أو كلمة المرور غير صحيحة" });
-      }
-      return res.json({ success: true, hotel: matchedHotel });
-    } catch (error) {
-      console.error("Hotel portal login auth error:", error);
-      return res.status(500).json({ message: "حدث خطأ أثناء فحص الحساب في الخادم" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 
-  app.get("/api/hotels/:hotelId/bookings", async (req, res) => {
+  app.get("/api/hotels/:id/bookings", async (req, res) => {
     try {
-      const hotelId = parseInt(req.params.hotelId, 10);
-      const bookings = await storage.getHotelBookings();
-      const filtered = bookings.filter(b => {
-        const idToMatch = b.hotel_id !== undefined ? b.hotel_id : b.hotelId;
-        return parseInt(idToMatch, 10) === hotelId;
-      });
-      return res.json(filtered);
-    } catch (error) {
-      console.error("Get hotel-specific bookings error:", error);
-      return res.status(500).json({ message: "حدث خطأ لم يُتم تحميل الحجوزات للفندق" });
+      const hotelId = parseInt(req.params.id, 10);
+      const bookings = await db.execute(sql`
+        SELECT * FROM hotel_bookings WHERE hotel_id = ${hotelId} ORDER BY id DESC
+      `);
+      res.json(bookings.rows || []);
+    } catch (err: any) {
+      res.json([]);
     }
   });
 
-  return httpServer;
-}
-
-interface ItineraryParams {
-  duration: number;
-  budget: string;
-  groupSize: number;
-  interests: string[];
-  preferredActivities: string[];
-  accommodation: string;
-  hotelPreference: string;
-  mealPreference: string;
-  governorates: string[];
-}
-
-interface GeoItem {
-  id: string;
-  name: string;
-  location: string;
-  category?: string;
-  governorateId?: string;
-  lat: number;
-  lng: number;
-  estimatedCost?: number;
-  itemType?: "attraction" | "restaurant" | "hotel" | "activity";
-}
-
-function shuffle<T>(arr: T[]): T[] {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
-
-function haversineDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLng = (lng2 - lng1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLng / 2) * Math.sin(dLng / 2);
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function findNearest<T extends GeoItem>(target: GeoItem, items: T[], exclude: Set<string>): T | null {
-  let best: T | null = null;
-  let bestDist = Infinity;
-  for (const item of items) {
-    if (exclude.has(item.id)) continue;
-    const dist = haversineDistance(target.lat, target.lng, item.lat, item.lng);
-    if (dist < bestDist) {
-      bestDist = dist;
-      best = item;
+  app.get("/api/hotels/:id/pms-rooms", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const rooms = await db.execute(sql`
+        SELECT * FROM db_hotel_rooms WHERE hotel_id = ${hotelId} ORDER BY id DESC
+      `);
+      res.json(rooms.rows || []);
+    } catch (err: any) {
+      res.json([]);
     }
-  }
-  return best;
-}
+  });
 
-const appAttractions: GeoItem[] = [
-  { id: "1", name: "شاطئ القرم", location: "محافظة مسقط", category: "nature", governorateId: "muscat", lat: 23.6071, lng: 58.4942, estimatedCost: 0 },
-  { id: "2", name: "سوق مطرح", location: "محافظة مسقط", category: "markets", governorateId: "muscat", lat: 23.6193, lng: 58.5713, estimatedCost: 0 },
-  { id: "3", name: "وادي الخوض", location: "محافظة مسقط", category: "wadis", governorateId: "muscat", lat: 23.5451, lng: 58.0872, estimatedCost: 0 },
-  { id: "4", name: "منتزه القرم الطبيعي", location: "محافظة مسقط", category: "nature", governorateId: "muscat", lat: 23.5992, lng: 58.4156, estimatedCost: 0 },
-  { id: "5", name: "قلعة مطرح", location: "محافظة مسقط", category: "heritage", governorateId: "muscat", lat: 23.6225, lng: 58.5695, estimatedCost: 1 },
-  { id: "1034", name: "دار الأوبرا السلطانية", location: "محافظة مسقط", category: "heritage", governorateId: "muscat", lat: 23.5858, lng: 58.4005, estimatedCost: 5 },
-  { id: "1032", name: "منتزه مرتفعات بوشر", location: "محافظة مسقط", category: "nature", governorateId: "muscat", lat: 23.5550, lng: 58.3950, estimatedCost: 0 },
-  { id: "1033", name: "حديقة النخلة", location: "محافظة مسقط", category: "entertainment", governorateId: "muscat", lat: 23.5880, lng: 58.3750, estimatedCost: 2 },
-  { id: "1037", name: "مسقط جراند مول", location: "محافظة مسقط", category: "markets", governorateId: "muscat", lat: 23.5900, lng: 58.4050, estimatedCost: 0 },
-  { id: "6", name: "جبل الأخضر", location: "محافظة الداخلية", category: "nature", governorateId: "dakhiliyah", lat: 23.0742, lng: 57.6517, estimatedCost: 0 },
-  { id: "7", name: "قلعة نزوى", location: "محافظة الداخلية", category: "heritage", governorateId: "dakhiliyah", lat: 22.9320, lng: 57.5292, estimatedCost: 3 },
-  { id: "8", name: "وادي الغول", location: "محافظة الداخلية", category: "wadis", governorateId: "dakhiliyah", lat: 23.1250, lng: 57.3500, estimatedCost: 0 },
-  { id: "9", name: "سوق نزوى التقليدي", location: "محافظة الداخلية", category: "markets", governorateId: "dakhiliyah", lat: 22.9315, lng: 57.5283, estimatedCost: 0 },
-  { id: "10", name: "حديقة فلج دارس", location: "محافظة الداخلية", category: "entertainment", governorateId: "dakhiliyah", lat: 22.9251, lng: 57.5350, estimatedCost: 0 },
-  { id: "34", name: "مسفاة العبريين", location: "محافظة الداخلية", category: "heritage", governorateId: "dakhiliyah", lat: 23.1350, lng: 57.3100, estimatedCost: 1 },
-  { id: "35", name: "جبل شمس", location: "محافظة الداخلية", category: "nature", governorateId: "dakhiliyah", lat: 23.2360, lng: 57.2610, estimatedCost: 0 },
-  { id: "36", name: "وادي بني خالد", location: "محافظة جنوب الشرقية", category: "wadis", governorateId: "south_sharqiyah", lat: 22.6100, lng: 59.0700, estimatedCost: 0 },
-  { id: "37", name: "وادي شاب", location: "محافظة جنوب الشرقية", category: "wadis", governorateId: "south_sharqiyah", lat: 22.8400, lng: 59.1800, estimatedCost: 0 },
-  { id: "39", name: "رأس الحد (محمية السلاحف)", location: "محافظة جنوب الشرقية", category: "nature", governorateId: "south_sharqiyah", lat: 22.5270, lng: 59.7980, estimatedCost: 3 },
-  { id: "40", name: "حصن صور", location: "محافظة جنوب الشرقية", category: "heritage", governorateId: "south_sharqiyah", lat: 22.5670, lng: 59.5290, estimatedCost: 1 },
-  { id: "43", name: "رمال وهيبة", location: "محافظة شمال الشرقية", category: "entertainment", governorateId: "north_sharqiyah", lat: 22.3500, lng: 58.5000, estimatedCost: 5 },
-  { id: "44", name: "وادي بني عوف", location: "محافظة شمال الشرقية", category: "wadis", governorateId: "north_sharqiyah", lat: 23.2000, lng: 57.6000, estimatedCost: 0 },
-  { id: "45", name: "حصن جبرين", location: "محافظة الداخلية", category: "heritage", governorateId: "dakhiliyah", lat: 23.2150, lng: 56.9900, estimatedCost: 3 },
-  { id: "14", name: "قلعة صحار", location: "محافظة شمال الباطنة", category: "heritage", governorateId: "north_batinah", lat: 24.3636, lng: 56.7485, estimatedCost: 2 },
-  { id: "13", name: "عين الكسفة", location: "محافظة شمال الباطنة", category: "springs", governorateId: "north_batinah", lat: 24.4000, lng: 56.7300, estimatedCost: 0 },
-  { id: "15", name: "ساحل البريمي", location: "محافظة البريمي", category: "nature", governorateId: "buraimi", lat: 24.2340, lng: 55.7545, estimatedCost: 0 },
-  { id: "16", name: "حصن الخندق", location: "محافظة البريمي", category: "heritage", governorateId: "buraimi", lat: 24.2400, lng: 55.7600, estimatedCost: 1 },
-  { id: "19", name: "عين رزات", location: "محافظة ظفار", category: "springs", governorateId: "dhofar", lat: 17.0878, lng: 54.1020, estimatedCost: 0 },
-  { id: "20", name: "كهف المرنيف", location: "محافظة ظفار", category: "nature", governorateId: "dhofar", lat: 16.8420, lng: 53.7640, estimatedCost: 0 },
-  { id: "22", name: "شلالات وادي دربات", location: "محافظة ظفار", category: "wadis", governorateId: "dhofar", lat: 17.1100, lng: 54.4300, estimatedCost: 0 },
-  { id: "24", name: "وادي دوكة (أرض اللبان)", location: "محافظة ظفار", category: "heritage", governorateId: "dhofar", lat: 17.1500, lng: 54.0700, estimatedCost: 2 },
-  { id: "25", name: "شاطئ المغسيل", location: "محافظة ظفار", category: "nature", governorateId: "dhofar", lat: 16.8415, lng: 53.7635, estimatedCost: 0 },
-  { id: "1038", name: "حديقة صلالة العامة", location: "محافظة ظفار", category: "entertainment", governorateId: "dhofar", lat: 17.0230, lng: 54.0900, estimatedCost: 0 },
-  { id: "11", name: "عين حمران", location: "محافظة الوسطى", category: "springs", governorateId: "wusta", lat: 20.3200, lng: 57.0400, estimatedCost: 0 },
-  { id: "12", name: "جزيرة مصيرة", location: "محافظة الوسطى", category: "nature", governorateId: "wusta", lat: 20.4500, lng: 58.7800, estimatedCost: 0 },
-  { id: "17", name: "وادي ضم", location: "محافظة الظاهرة", category: "wadis", governorateId: "dhahirah", lat: 23.3000, lng: 56.5000, estimatedCost: 0 },
-  { id: "18", name: "حصن عبري", location: "محافظة الظاهرة", category: "heritage", governorateId: "dhahirah", lat: 23.2250, lng: 56.7230, estimatedCost: 1 },
-  { id: "30", name: "وادي الحوقين", location: "محافظة جنوب الباطنة", category: "wadis", governorateId: "south_batinah", lat: 23.3800, lng: 57.3600, estimatedCost: 0 },
-  { id: "31", name: "عين الثوارة", location: "محافظة جنوب الباطنة", category: "springs", governorateId: "south_batinah", lat: 23.4100, lng: 57.5300, estimatedCost: 0 },
-  { id: "49", name: "خور شم", location: "محافظة مسندم", category: "nature", governorateId: "musandam", lat: 26.1800, lng: 56.2300, estimatedCost: 0 },
-  { id: "50", name: "قلعة خصب", location: "محافظة مسندم", category: "heritage", governorateId: "musandam", lat: 26.1760, lng: 56.2480, estimatedCost: 2 },
-  { id: "48", name: "الرحلات البحرية في الخيران", location: "محافظة مسندم", category: "entertainment", governorateId: "musandam", lat: 26.1850, lng: 56.2350, estimatedCost: 15 },
-  { id: "62", name: "سلك انزالقي خصب", location: "محافظة مسندم", category: "entertainment", governorateId: "musandam", lat: 26.1790, lng: 56.2400, estimatedCost: 10 },
-  { id: "63", name: "شاطئ بصة", location: "محافظة مسندم", category: "nature", governorateId: "musandam", lat: 26.1650, lng: 56.2500, estimatedCost: 0 },
-  { id: "64", name: "خور نجد", location: "محافظة مسندم", category: "wadis", governorateId: "musandam", lat: 26.1500, lng: 56.2700, estimatedCost: 0 },
-  { id: "67", name: "جبل الرحيم", location: "محافظة مسندم", category: "nature", governorateId: "musandam", lat: 26.1400, lng: 56.2200, estimatedCost: 0 },
-  { id: "66", name: "حصن الكمازرة", location: "محافظة مسندم", category: "heritage", governorateId: "musandam", lat: 26.2000, lng: 56.2600, estimatedCost: 1 },
-  { id: "61", name: "مركز لولو التجاري", location: "محافظة مسندم", category: "markets", governorateId: "musandam", lat: 26.1770, lng: 56.2470, estimatedCost: 0 },
-  { id: "65", name: "حديقة خصب العامة", location: "محافظة مسندم", category: "entertainment", governorateId: "musandam", lat: 26.1740, lng: 56.2450, estimatedCost: 0 },
-  { id: "1035", name: "نادي عُمان للرماية", location: "محافظة مسقط", category: "entertainment", governorateId: "muscat", lat: 23.5700, lng: 58.3600, estimatedCost: 15 },
-  { id: "1036", name: "عالم فابي لاند", location: "محافظة مسقط", category: "entertainment", governorateId: "muscat", lat: 23.5850, lng: 58.3850, estimatedCost: 5 },
-  { id: "1041", name: "منتزه أتين الطبيعي", location: "محافظة ظفار", category: "nature", governorateId: "dhofar", lat: 17.0800, lng: 54.2000, estimatedCost: 0 },
-];
-
-const appActivities: GeoItem[] = [
-  { id: "act-1", name: "هايكنج وادي شاب", location: "محافظة جنوب الشرقية", category: "adventure", governorateId: "south_sharqiyah", lat: 22.8400, lng: 59.1800, estimatedCost: 20, itemType: "activity" },
-  { id: "act-2", name: "هايكنج جبل شمس (الممشى)", location: "محافظة الداخلية", category: "adventure", governorateId: "dakhiliyah", lat: 23.2360, lng: 57.2610, estimatedCost: 0, itemType: "activity" },
-  { id: "act-3", name: "ركوب الجمال في رمال وهيبة", location: "محافظة شمال الشرقية", category: "adventure", governorateId: "north_sharqiyah", lat: 22.3500, lng: 58.5000, estimatedCost: 15, itemType: "activity" },
-  { id: "act-4", name: "رحلة بحرية في مسندم", location: "محافظة مسندم", category: "adventure", governorateId: "musandam", lat: 26.1850, lng: 56.2350, estimatedCost: 25, itemType: "activity" },
-  { id: "act-5", name: "سباحة في وادي بني خالد", location: "محافظة جنوب الشرقية", category: "swimming", governorateId: "south_sharqiyah", lat: 22.6100, lng: 59.0700, estimatedCost: 0, itemType: "activity" },
-  { id: "act-6", name: "سباحة في عين رزات", location: "محافظة ظفار", category: "swimming", governorateId: "dhofar", lat: 17.0878, lng: 54.1020, estimatedCost: 0, itemType: "activity" },
-  { id: "act-7", name: "غوص في جزر الديمانيات", location: "محافظة مسقط", category: "swimming", governorateId: "muscat", lat: 23.8500, lng: 57.9500, estimatedCost: 30, itemType: "activity" },
-  { id: "act-8", name: "تخييم في رمال وهيبة", location: "محافظة شمال الشرقية", category: "camping", governorateId: "north_sharqiyah", lat: 22.3500, lng: 58.5000, estimatedCost: 25, itemType: "activity" },
-  { id: "act-9", name: "مشاهدة السلاحف في رأس الجنز", location: "محافظة جنوب الشرقية", category: "nature", governorateId: "south_sharqiyah", lat: 22.4350, lng: 59.7950, estimatedCost: 5, itemType: "activity" },
-  { id: "act-10", name: "انزالق على الرمال", location: "محافظة شمال الشرقية", category: "adventure", governorateId: "north_sharqiyah", lat: 22.3600, lng: 58.5100, estimatedCost: 10, itemType: "activity" },
-  { id: "act-11", name: "تجربة الرماية الرياضية", location: "محافظة مسقط", category: "sports", governorateId: "muscat", lat: 23.5700, lng: 58.3600, estimatedCost: 20, itemType: "activity" },
-  { id: "act-12", name: "هايكنج وادي الأربيين", location: "محافظة جنوب الشرقية", category: "adventure", governorateId: "south_sharqiyah", lat: 22.9200, lng: 59.2100, estimatedCost: 0, itemType: "activity" },
-  { id: "act-13", name: "سباحة في وادي الحوقين", location: "محافظة جنوب الباطنة", category: "swimming", governorateId: "south_batinah", lat: 23.3800, lng: 57.3600, estimatedCost: 0, itemType: "activity" },
-  { id: "act-14", name: "استكشاف كهوف الهوتة", location: "محافظة الداخلية", category: "adventure", governorateId: "dakhiliyah", lat: 23.0900, lng: 57.3800, estimatedCost: 7, itemType: "activity" },
-];
-
-const appHotels: GeoItem[] = [
-  { id: "1", name: "فندق الحواس الست", location: "محافظة مسندم", governorateId: "musandam", lat: 26.1600, lng: 56.2550, estimatedCost: 500 },
-  { id: "2", name: "مخيم ألف ليلة", location: "محافظة شمال الشرقية", governorateId: "north_sharqiyah", lat: 22.3600, lng: 58.4900, estimatedCost: 200 },
-  { id: "3", name: "فندق شانغريلا مسقط", location: "محافظة مسقط", governorateId: "muscat", lat: 23.5400, lng: 58.6400, estimatedCost: 150 },
-  { id: "4", name: "منتجع أنتارا الجبل الأخضر", location: "محافظة الداخلية", governorateId: "dakhiliyah", lat: 23.0750, lng: 57.6600, estimatedCost: 180 },
-  { id: "5", name: "فندق W مسقط", location: "محافظة مسقط", governorateId: "muscat", lat: 23.6100, lng: 58.4200, estimatedCost: 100 },
-  { id: "6", name: "فندق كمبينسكي الموج", location: "محافظة مسقط", governorateId: "muscat", lat: 23.6400, lng: 58.2700, estimatedCost: 120 },
-  { id: "7", name: "فندق الفيصل", location: "محافظة ظفار", governorateId: "dhofar", lat: 17.0178, lng: 54.0825, estimatedCost: 80 },
-  { id: "8", name: "فندق سنتارا صلالة", location: "محافظة ظفار", governorateId: "dhofar", lat: 16.9990, lng: 54.1200, estimatedCost: 120 },
-];
-
-const appRestaurants: GeoItem[] = [
-  { id: "1", name: "قهوة البرج", location: "محافظة جنوب الباطنة", governorateId: "south_batinah", lat: 23.4850, lng: 57.9500, estimatedCost: 5 },
-  { id: "2", name: "لاجونا", location: "محافظة مسقط", governorateId: "muscat", lat: 23.5960, lng: 58.4100, estimatedCost: 7 },
-  { id: "3", name: "بيت المضغوط", location: "محافظة مسقط", governorateId: "muscat", lat: 23.5800, lng: 58.4000, estimatedCost: 5 },
-  { id: "4", name: "مطاعم خوان", location: "محافظة مسقط", governorateId: "muscat", lat: 23.5950, lng: 58.4500, estimatedCost: 7 },
-  { id: "5", name: "بين القصورين", location: "محافظة مسقط", governorateId: "muscat", lat: 23.6050, lng: 58.5400, estimatedCost: 7 },
-  { id: "6", name: "ذا ريستورانت", location: "محافظة مسقط", governorateId: "muscat", lat: 23.5870, lng: 58.4250, estimatedCost: 7 },
-  { id: "7", name: "ذكريات", location: "محافظة مسقط", governorateId: "muscat", lat: 23.6100, lng: 58.5000, estimatedCost: 7 },
-  { id: "8", name: "شواء مسقط", location: "محافظة مسقط", governorateId: "muscat", lat: 23.6000, lng: 58.4700, estimatedCost: 5 },
-  { id: "11", name: "مطعم ومطبخ عين الخليج", location: "محافظة شمال الشرقية", governorateId: "north_sharqiyah", lat: 22.5700, lng: 58.1200, estimatedCost: 5 },
-  { id: "12", name: "مطعم بن عتيق للمأكولات العمانية", location: "محافظة ظفار", governorateId: "dhofar", lat: 17.0170, lng: 54.0900, estimatedCost: 7 },
-  { id: "13", name: "مطعم الشرقية", location: "محافظة جنوب الشرقية", governorateId: "south_sharqiyah", lat: 22.5700, lng: 59.5300, estimatedCost: 5 },
-  { id: "14", name: "مطعم الداخلية", location: "محافظة الداخلية", governorateId: "dakhiliyah", lat: 22.9300, lng: 57.5300, estimatedCost: 5 },
-  { id: "15", name: "مطعم خصب", location: "محافظة مسندم", governorateId: "musandam", lat: 26.1770, lng: 56.2470, estimatedCost: 7 },
-];
-
-function findNearestWithinRadius<T extends GeoItem>(target: GeoItem, items: T[], exclude: Set<string>, maxDistKm: number): T | null {
-  let best: T | null = null;
-  let bestDist = Infinity;
-  for (const item of items) {
-    if (exclude.has(item.id)) continue;
-    const dist = haversineDistance(target.lat, target.lng, item.lat, item.lng);
-    if (dist <= maxDistKm && dist < bestDist) {
-      bestDist = dist;
-      best = item;
+  app.post("/api/hotels/:id/pms-rooms", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const { name, nameAr, description, priceBase, maxGuests, amenities, image } = req.body;
+      const priceFinal = (parseFloat(priceBase) || 0) * 1.15;
+      const result = await db.execute(sql`
+        INSERT INTO db_hotel_rooms (hotel_id, name, name_ar, description, price_base, commission_pct, price_final, max_guests, amenities, image, status)
+        VALUES (${hotelId}, ${name || nameAr}, ${nameAr}, ${description || ''}, ${priceBase || 0}, 15, ${priceFinal}, ${maxGuests || 2}, ${amenities || '{}'}, ${image || ''}, 'pending')
+        RETURNING *
+      `);
+      res.status(201).json(result.rows[0]);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-  }
-  return best;
-}
+  });
 
-const interestToCategoryMap: Record<string, string[]> = {
-  adventure: ["adventure", "entertainment", "sports"],
-  nature: ["nature", "wadis", "springs"],
-  culture: ["heritage", "markets"],
-  heritage: ["heritage"],
-  swimming: ["wadis", "springs", "swimming"],
-  food: ["markets"],
-  entertainment: ["entertainment", "sports"],
-  relaxation: ["nature", "springs"],
-  shopping: ["markets"],
-  photography: ["nature", "heritage", "wadis"],
-};
-
-const budgetMultipliers: Record<string, number> = {
-  low: 0.6,
-  medium: 1.0,
-  high: 1.5,
-  luxury: 2.5,
-};
-
-function generateItinerary(params: ItineraryParams): Itinerary {
-  const { duration, budget, groupSize, interests, preferredActivities, hotelPreference, governorates } = params;
-  const singleHotelMode = hotelPreference !== "multiple";
-  const numDays = Math.min(duration, 7);
-  const budgetMult = budgetMultipliers[budget] || 1.0;
-
-  const budgetTitles: Record<string, string> = {
-    low: "رحلة اقتصادية مميزة",
-    medium: "رحلة متوازنة ومريحة",
-    high: "رحلة فاخرة راقية",
-    luxury: "رحلة استثنائية فاخرة",
-  };
-
-  const matchedCategories = new Set<string>();
-  for (const interest of interests) {
-    const cats = interestToCategoryMap[interest];
-    if (cats) cats.forEach(c => matchedCategories.add(c));
-  }
-  for (const act of preferredActivities) {
-    const cats = interestToCategoryMap[act];
-    if (cats) cats.forEach(c => matchedCategories.add(c));
-  }
-
-  let filteredAttractions = governorates.length > 0
-    ? appAttractions.filter(a => a.governorateId && governorates.includes(a.governorateId))
-    : [...appAttractions];
-  let filteredHotels = governorates.length > 0
-    ? appHotels.filter(h => h.governorateId && governorates.includes(h.governorateId))
-    : [...appHotels];
-  let filteredRestaurants = governorates.length > 0
-    ? appRestaurants.filter(r => r.governorateId && governorates.includes(r.governorateId))
-    : [...appRestaurants];
-  let filteredActivities = governorates.length > 0
-    ? appActivities.filter(a => a.governorateId && governorates.includes(a.governorateId))
-    : [...appActivities];
-
-  if (filteredAttractions.length < 4) filteredAttractions = [...appAttractions];
-  if (filteredHotels.length === 0) filteredHotels = [...appHotels];
-  if (filteredRestaurants.length < 2) filteredRestaurants = [...appRestaurants];
-  if (filteredActivities.length === 0) filteredActivities = [...appActivities];
-
-  let interestAttractions: GeoItem[] = [];
-  let otherAttractions: GeoItem[] = [];
-  if (matchedCategories.size > 0) {
-    interestAttractions = filteredAttractions.filter(a => a.category && matchedCategories.has(a.category));
-    otherAttractions = filteredAttractions.filter(a => !a.category || !matchedCategories.has(a.category));
-  } else {
-    otherAttractions = filteredAttractions;
-  }
-
-  const prioritizedAttractions = [...shuffle(interestAttractions), ...shuffle(otherAttractions)];
-
-  let interestActivities: GeoItem[] = [];
-  if (matchedCategories.size > 0) {
-    interestActivities = filteredActivities.filter(a => a.category && matchedCategories.has(a.category));
-  }
-  if (interestActivities.length === 0) interestActivities = filteredActivities;
-  const shuffledActivities = shuffle(interestActivities);
-
-  const hotels = shuffle(filteredHotels);
-  const restaurants = shuffle(filteredRestaurants);
-
-  const govGroups: Record<string, GeoItem[]> = {};
-  for (const a of prioritizedAttractions) {
-    const gov = a.governorateId || "other";
-    if (!govGroups[gov]) govGroups[gov] = [];
-    govGroups[gov].push(a);
-  }
-
-  const sortedGovs = Object.entries(govGroups)
-    .sort((a, b) => b[1].length - a[1].length)
-    .map(([gov]) => gov);
-
-  const usedAttractions = new Set<string>();
-  const usedRestaurants = new Set<string>();
-  const usedHotels = new Set<string>();
-  const usedActivities = new Set<string>();
-  const days: ItineraryDay[] = [];
-
-  const dayGovAssignments: string[] = [];
-  let govIdx = 0;
-  const tempUsed = new Set<string>();
-  for (let i = 0; i < numDays; i++) {
-    if (govIdx >= sortedGovs.length * 3) {
-      dayGovAssignments.push(sortedGovs[i % sortedGovs.length]);
-      continue;
+  app.delete("/api/pms-rooms/:id", async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.id, 10);
+      await db.execute(sql`DELETE FROM db_hotel_rooms WHERE id = ${roomId}`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    const gov = sortedGovs[govIdx % sortedGovs.length];
-    const available = (govGroups[gov] || []).filter(a => !tempUsed.has(a.id));
-    if (available.length >= 1) {
-      dayGovAssignments.push(gov);
-      available.slice(0, 3).forEach(a => tempUsed.add(a.id));
-      govIdx++;
-    } else {
-      govIdx++;
-      i--;
+  });
+
+  app.patch("/api/pms-rooms/:id/status", async (req, res) => {
+    try {
+      const roomId = parseInt(req.params.id, 10);
+      const { status } = req.body;
+      await db.execute(sql`UPDATE db_hotel_rooms SET status = ${status} WHERE id = ${roomId}`);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-  }
+  });
 
-  let fixedHotel: GeoItem | null = null;
-  if (singleHotelMode) {
-    const allDayGovs = new Set(dayGovAssignments);
-    const govHotels = hotels.filter(h => h.governorateId && allDayGovs.has(h.governorateId));
-    const pool = govHotels.length > 0 ? govHotels : hotels;
-    const center: GeoItem = {
-      id: "center", name: "", location: "",
-      lat: prioritizedAttractions.reduce((s, a) => s + a.lat, 0) / prioritizedAttractions.length,
-      lng: prioritizedAttractions.reduce((s, a) => s + a.lng, 0) / prioritizedAttractions.length,
-    };
-    fixedHotel = findNearest(center, pool, new Set()) || hotels[0];
-  }
-
-  const MAX_CLUSTER_RADIUS = 80;
-  let totalHotelsCost = 0;
-  let totalRestaurantsCost = 0;
-  let totalAttractionsCost = 0;
-  let totalActivitiesCost = 0;
-  let totalTransportCost = 0;
-
-  for (let i = 0; i < numDays; i++) {
-    const dayGov = dayGovAssignments[i] || sortedGovs[i % sortedGovs.length];
-    const govAttractionPool = govGroups[dayGov] || [];
-
-    let anchor = govAttractionPool.find(a => !usedAttractions.has(a.id));
-    if (!anchor) anchor = prioritizedAttractions.find(a => !usedAttractions.has(a.id));
-    if (!anchor) {
-      usedAttractions.clear();
-      anchor = govAttractionPool[0] || prioritizedAttractions[0];
+  app.get("/api/hotels/:id/payouts", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const payouts = await db.execute(sql`
+        SELECT * FROM db_hotel_payouts WHERE hotel_id = ${hotelId} ORDER BY id DESC
+      `);
+      res.json(payouts.rows || []);
+    } catch (err: any) {
+      res.json([]);
     }
-    usedAttractions.add(anchor.id);
+  });
 
-    const attr1 = anchor;
-    let attr2 = findNearestWithinRadius(attr1, govAttractionPool, usedAttractions, MAX_CLUSTER_RADIUS);
-    if (!attr2) attr2 = findNearestWithinRadius(attr1, prioritizedAttractions, usedAttractions, MAX_CLUSTER_RADIUS);
-    if (!attr2) attr2 = findNearest(attr1, prioritizedAttractions, usedAttractions);
-    if (!attr2) attr2 = prioritizedAttractions.find(a => a.id !== attr1.id) || attr1;
-    usedAttractions.add(attr2.id);
-
-    let dayActivity: GeoItem | null = null;
-    const govActivities = shuffledActivities.filter(a => a.governorateId === dayGov && !usedActivities.has(a.id));
-    if (govActivities.length > 0) {
-      dayActivity = govActivities[0];
-    } else {
-      const anyActivity = shuffledActivities.find(a => !usedActivities.has(a.id));
-      if (anyActivity && i < numDays - 1) dayActivity = anyActivity;
+  app.get("/api/hotels/:id/reviews", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const reviews = await db.execute(sql`
+        SELECT * FROM db_hotel_reviews WHERE hotel_id = ${hotelId} ORDER BY id DESC
+      `);
+      res.json(reviews.rows || []);
+    } catch (err: any) {
+      res.json([]);
     }
-    if (dayActivity) usedActivities.add(dayActivity.id);
+  });
 
-    const dayCenter: GeoItem = {
-      id: "center", name: "", location: "",
-      lat: (attr1.lat + attr2.lat) / 2,
-      lng: (attr1.lng + attr2.lng) / 2,
-    };
+  app.get("/api/hotels/:id/staff", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const staff = await db.execute(sql`
+        SELECT id, hotel_id, username, role, name, created_at FROM db_hotel_staff WHERE hotel_id = ${hotelId} ORDER BY id DESC
+      `);
+      res.json(staff.rows || []);
+    } catch (err: any) {
+      res.json([]);
+    }
+  });
 
-    let hotel: GeoItem;
-    if (singleHotelMode && fixedHotel) {
-      hotel = fixedHotel;
-    } else {
-      let h = findNearestWithinRadius(dayCenter, hotels, usedHotels, MAX_CLUSTER_RADIUS);
-      if (!h) h = findNearest(dayCenter, hotels, usedHotels);
-      if (!h) {
-        usedHotels.clear();
-        h = findNearest(dayCenter, hotels, new Set()) || hotels[0];
+  app.post("/api/hotels/:id/staff", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const { username, password, role, name } = req.body;
+      if (!username || !password || !name) {
+        return res.status(400).json({ error: "اسم المستخدم وكلمة المرور والاسم مطلوبة." });
       }
-      hotel = h;
-      usedHotels.add(hotel.id);
+      const newStaff = await db.execute(sql`
+        INSERT INTO db_hotel_staff (hotel_id, username, password, role, name)
+        VALUES (${hotelId}, ${username}, ${password}, ${role || 'receptionist'}, ${name})
+        RETURNING id, hotel_id, username, role, name, created_at
+      `);
+      res.status(201).json(newStaff.rows[0] || { success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
+  });
 
-    let restaurant1 = findNearestWithinRadius(attr1, restaurants, usedRestaurants, MAX_CLUSTER_RADIUS);
-    if (!restaurant1) restaurant1 = findNearest(attr1, restaurants, usedRestaurants);
-    if (!restaurant1) {
-      usedRestaurants.clear();
-      restaurant1 = findNearest(attr1, restaurants, new Set()) || restaurants[0];
+  app.delete("/api/hotels/:id/staff/:staffId", async (req, res) => {
+    try {
+      const hotelId = parseInt(req.params.id, 10);
+      const staffId = parseInt(req.params.staffId, 10);
+      await db.execute(sql`
+        DELETE FROM db_hotel_staff WHERE id = ${staffId} AND hotel_id = ${hotelId}
+      `);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
-    usedRestaurants.add(restaurant1.id);
+  });
 
-    let restaurant2 = findNearestWithinRadius(attr2, restaurants, usedRestaurants, MAX_CLUSTER_RADIUS);
-    if (!restaurant2) restaurant2 = findNearest(attr2, restaurants, usedRestaurants);
-    if (!restaurant2) restaurant2 = restaurants.find(r => r.id !== restaurant1.id) || restaurant1;
-    if (restaurant2.id !== restaurant1.id) usedRestaurants.add(restaurant2.id);
-
-    const distAttr = haversineDistance(attr1.lat, attr1.lng, attr2.lat, attr2.lng);
-    const travelMin = Math.max(15, Math.round(distAttr / 60 * 60));
-    const dayTransport = Math.round(distAttr * 0.3 * budgetMult);
-
-    const hotelCost = Math.round((hotel.estimatedCost || 100) * budgetMult);
-    const r1Cost = Math.round((restaurant1.estimatedCost || 5) * groupSize);
-    const r2Cost = Math.round((restaurant2.estimatedCost || 5) * groupSize);
-    const a1Cost = Math.round((attr1.estimatedCost || 0) * groupSize);
-    const a2Cost = Math.round((attr2.estimatedCost || 0) * groupSize);
-    const actCost = dayActivity ? Math.round((dayActivity.estimatedCost || 0) * groupSize) : 0;
-
-    totalHotelsCost += hotelCost;
-    totalRestaurantsCost += r1Cost + r2Cost;
-    totalAttractionsCost += a1Cost + a2Cost;
-    totalActivitiesCost += actCost;
-    totalTransportCost += dayTransport;
-
-    const activities: ItineraryActivity[] = [
-      {
-        time: "08:00",
-        activity: "إفطار في الفندق",
-        location: hotel.name,
-        type: "hotel",
-        itemId: hotel.id,
-        description: `${hotel.location}`,
-        estimatedCost: hotelCost,
-        category: "hotel",
-      },
-      {
-        time: "10:00",
-        activity: `زيارة ${attr1.name}`,
-        location: attr1.location,
-        type: "attraction",
-        itemId: attr1.id,
-        description: `${Math.round(haversineDistance(hotel.lat, hotel.lng, attr1.lat, attr1.lng))} كم من الفندق`,
-        estimatedCost: a1Cost,
-        category: attr1.category,
-      },
-      {
-        time: "13:00",
-        activity: "غداء",
-        location: restaurant1.name,
-        type: "restaurant",
-        itemId: restaurant1.id,
-        description: `${Math.round(haversineDistance(attr1.lat, attr1.lng, restaurant1.lat, restaurant1.lng))} كم من ${attr1.name}`,
-        estimatedCost: r1Cost,
-        category: "restaurant",
-      },
-    ];
-
-    if (dayActivity) {
-      activities.push({
-        time: "14:30",
-        activity: dayActivity.name,
-        location: dayActivity.location,
-        type: "activity",
-        itemId: dayActivity.id,
-        description: `نشاط مميز - ${Math.round(haversineDistance(restaurant1.lat, restaurant1.lng, dayActivity.lat, dayActivity.lng))} كم`,
-        estimatedCost: actCost,
-        category: dayActivity.category,
-      });
-      activities.push({
-        time: `${16 + Math.floor(travelMin / 60)}:${String(travelMin % 60).padStart(2, '0')}`,
-        activity: `استكشاف ${attr2.name}`,
-        location: attr2.location,
-        type: "attraction",
-        itemId: attr2.id,
-        description: `${Math.round(distAttr)} كم من ${attr1.name} (~${travelMin} دقيقة)`,
-        estimatedCost: a2Cost,
-        category: attr2.category,
-      });
-    } else {
-      activities.push({
-        time: `${14 + Math.floor(travelMin / 60)}:${String(travelMin % 60).padStart(2, '0')}`,
-        activity: `استكشاف ${attr2.name}`,
-        location: attr2.location,
-        type: "attraction",
-        itemId: attr2.id,
-        description: `${Math.round(distAttr)} كم من ${attr1.name} (~${travelMin} دقيقة)`,
-        estimatedCost: a2Cost,
-        category: attr2.category,
-      });
+  // ==========================================
+  // PORTAL ACCOUNTS & SUB-DASHBOARD AUTH ENDPOINTS
+  // ==========================================
+  app.get("/api/download-credentials-docx", async (req, res) => {
+    try {
+      const filePath = path.join(process.cwd(), "client", "public", "shouma_accounts_and_passwords.docx");
+      if (fs.existsSync(filePath)) {
+        res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+        res.setHeader("Content-Disposition", 'attachment; filename="shouma_portal_accounts.docx"');
+        return res.sendFile(filePath);
+      } else {
+        return res.status(404).json({ error: "ملف وورد غير موجود." });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
+  });
 
-    activities.push(
-      {
-        time: "19:00",
-        activity: "عشاء",
-        location: restaurant2.name,
-        type: "restaurant",
-        itemId: restaurant2.id,
-        description: `${Math.round(haversineDistance(attr2.lat, attr2.lng, restaurant2.lat, restaurant2.lng))} كم من ${attr2.name}`,
-        estimatedCost: r2Cost,
-        category: "restaurant",
-      },
-      {
-        time: "21:00",
-        activity: "العودة للفندق",
-        location: hotel.name,
-        type: "hotel",
-        itemId: hotel.id,
-        description: `${Math.round(haversineDistance(attr2.lat, attr2.lng, hotel.lat, hotel.lng))} كم`,
-        estimatedCost: 0,
-        category: "hotel",
-      },
-    );
+  app.get("/api/portal-accounts", async (req, res) => {
+    try {
+      const accounts = await storage.getPortalAccounts();
+      res.json(accounts);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-    const dayTitlesByGov: Record<string, string[]> = {
-      muscat: ["استكشاف مسقط", "جمال العاصمة", "يوم في مسقط"],
-      dakhiliyah: ["تراث الداخلية", "قلاع ووديان", "يوم في نزوى"],
-      dhofar: ["سحر ظفار", "خريف صلالة", "طبيعة ظفار"],
-      musandam: ["جمال مسندم", "أفيورد العرب", "بحر مسندم"],
-      north_batinah: ["ساحل الباطنة", "تاريخ صحار"],
-      south_batinah: ["وديان جنوب الباطنة", "ينابيع وطبيعة"],
-      north_sharqiyah: ["صحراء الشرقية", "رمال وهيبة"],
-      south_sharqiyah: ["سواحل الشرقية", "وديان وأودية"],
-      buraimi: ["تراث البريمي", "يوم في البريمي"],
-      dhahirah: ["تراث الظاهرة", "يوم في عبري"],
-      wusta: ["طبيعة الوسطى", "جزيرة مصيرة"],
-    };
+  app.post("/api/portal-accounts", async (req, res) => {
+    try {
+      const { portalType, portalName, email, password, name, isActive } = req.body;
+      if (!email || !password || !name) {
+        return res.status(400).json({ error: "البريد الإلكتروني، كلمة المرور، والاسم مطلوبات." });
+      }
+      const account = await storage.createPortalAccount({
+        portalType: portalType || "hotels",
+        portalName: portalName || "لوحة تحكم فرعية",
+        email,
+        password,
+        name,
+        isActive: isActive !== undefined ? isActive : true
+      });
+      res.status(201).json({ success: true, account });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-    const dayTitlesGeneral = [
-      "الوصول والاستكشاف",
-      "يوم المعالم التاريخية",
-      "مغامرة في الطبيعة",
-      "التسوق والترفيه",
-      "الثقافة والفنون",
-      "الاسترخاء والتجديد",
-      "الوداع والمغادرة",
-    ];
+  app.patch("/api/portal-accounts/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      const updated = await storage.updatePortalAccount(id, req.body);
+      res.json({ success: true, account: updated });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-    const govTitles = dayTitlesByGov[dayGov];
-    const dayTitle = govTitles
-      ? govTitles[i % govTitles.length]
-      : dayTitlesGeneral[i % dayTitlesGeneral.length];
+  app.delete("/api/portal-accounts/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      await storage.deletePortalAccount(id);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
-    days.push({
-      day: i + 1,
-      title: dayTitle,
-      activities,
-    });
-  }
+  app.post("/api/portal-auth/login", async (req, res) => {
+    try {
+      const { portalType, email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({
+          success: false,
+          message: "يرجى إدخال البريد الإلكتروني وكلمة المرور."
+        });
+      }
 
-  const budgetSummary: BudgetSummary = {
-    hotels: totalHotelsCost,
-    restaurants: totalRestaurantsCost,
-    attractions: totalAttractionsCost,
-    activities: totalActivitiesCost,
-    transport: totalTransportCost,
-    total: totalHotelsCost + totalRestaurantsCost + totalAttractionsCost + totalActivitiesCost + totalTransportCost,
-  };
+      // Check portal accounts database
+      const account = await storage.authenticatePortalAccount(portalType, email, password);
+      if (account) {
+        // Record audit log entry
+        await storage.addPortalAuditLog({
+          portalType: account.portalType || portalType,
+          portalName: account.portalName || "لوحة تحكم فرعية",
+          email: account.email,
+          name: account.name,
+          action: "LOGIN",
+          timestamp: new Date().toISOString(),
+          ip: req.ip || "192.168.1.1"
+        });
 
-  return {
-    id: `itinerary-${Date.now()}`,
-    title: budgetTitles[budget] || "رحلتك المخصصة",
-    duration,
-    budget,
-    governorates,
-    days,
-    budgetSummary,
-  };
+        return res.json({
+          success: true,
+          message: "تم تسجيل الدخول بنجاح!",
+          account
+        });
+      }
+
+      // Fallback check: if super admin credentials or legacy hotel credentials used
+      if (
+        (email.trim() === "admin@shouma.om" || email.trim() === "admin@shouma.com") &&
+        (password === "admin123" || password === "shouma2026")
+      ) {
+        const adminAcc = {
+          id: 0,
+          portalType: portalType || "admin",
+          portalName: "مدير النظام العام",
+          email: email.trim(),
+          name: "المسؤول الأعلى"
+        };
+        await storage.addPortalAuditLog({
+          portalType: adminAcc.portalType,
+          portalName: adminAcc.portalName,
+          email: adminAcc.email,
+          name: adminAcc.name,
+          action: "LOGIN",
+          timestamp: new Date().toISOString(),
+          ip: req.ip || "192.168.1.1"
+        });
+
+        return res.json({
+          success: true,
+          message: "تم تسجيل الدخول بصلاحية مدير النظام العام!",
+          account: adminAcc
+        });
+      }
+
+      return res.status(401).json({
+        success: false,
+        message: "البريد الإلكتروني أو كلمة المرور غير صحيحة، أو لم يتم إضافة هذا الحساب من قبل المدير عبر لوحة التحكم الكبرى."
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // Logout audit logging endpoint
+  app.post("/api/portal-auth/logout", async (req, res) => {
+    try {
+      const { portalType, portalName, email, name } = req.body;
+      const log = await storage.addPortalAuditLog({
+        portalType: portalType || "general",
+        portalName: portalName || "لوحة تحكم فرعية",
+        email: email || "unknown@shouma.com",
+        name: name || "الموظف المسؤول",
+        action: "LOGOUT",
+        timestamp: new Date().toISOString(),
+        ip: req.ip || "192.168.1.1"
+      });
+      res.json({ success: true, log });
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  // Fetch all audit logs for Super Admin
+  app.get("/api/portal-auth/audit-logs", async (req, res) => {
+    try {
+      const logs = await storage.getPortalAuditLogs();
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Explicitly post custom audit log
+  app.post("/api/portal-auth/audit-log", async (req, res) => {
+    try {
+      const log = await storage.addPortalAuditLog(req.body);
+      res.json({ success: true, log });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 }
+

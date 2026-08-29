@@ -28,6 +28,22 @@ export default function Login({ onLoginSuccess, onApplyClick, onAdminClick }: Lo
     }
 
     try {
+      // Check against portal accounts
+      const portalRes = await fetch('/api/portal-auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portalType: 'guides', email, password })
+      });
+      if (portalRes.ok) {
+        const pData = await portalRes.json();
+        if (pData.success) {
+          sessionStorage.setItem('shouma_guide_id', '1');
+          onLoginSuccess(pData.account.name || 'مدير بوابة المرشدين');
+          setLoading(false);
+          return;
+        }
+      }
+
       // Fetch current db guides
       const resp = await fetch('/api/local-tour-guides');
       let guides: any[] = [];

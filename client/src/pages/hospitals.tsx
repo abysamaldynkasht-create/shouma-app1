@@ -21,7 +21,7 @@ import {
   Clock,
   Phone
 } from "lucide-react";
-import logoImage from "@assets/شومة_1768320219408.jpg";
+import logoImage from "@/assets/shouma-logo.png";
 
 export default function HospitalsPage() {
   const [, setLocation] = useLocation();
@@ -60,7 +60,7 @@ export default function HospitalsPage() {
               <img 
                 src={logoImage} 
                 alt="شومة" 
-                className="h-8 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-9 w-auto object-contain rounded-md drop-shadow-sm"
               />
               <span className="text-lg font-bold">المستشفيات والمراكز الصحية</span>
             </div>

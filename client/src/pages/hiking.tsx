@@ -12,6 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { Translate } from "@/components/Translate";
 import { 
   Mountain, 
   ArrowRight, 
@@ -22,10 +24,11 @@ import {
   Ruler,
   Phone
 } from "lucide-react";
-import logoImage from "@assets/شومة_1768320219408.jpg";
+import logoImage from "@/assets/shouma-logo.png";
 
 export default function HikingPage() {
   const [, setLocation] = useLocation();
+  const { t, language, isRTL } = useLanguage();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedRegion, setSelectedRegion] = useState<string>("all");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("all");
@@ -117,7 +120,7 @@ export default function HikingPage() {
               <img 
                 src={logoImage} 
                 alt="شومة" 
-                className="h-8 w-auto mix-blend-multiply dark:mix-blend-screen dark:invert"
+                className="h-9 w-auto object-contain rounded-md drop-shadow-sm"
               />
               <span className="text-lg font-bold">رحلات الهايكنق</span>
             </div>
@@ -185,7 +188,7 @@ export default function HikingPage() {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         <div className="flex items-center justify-between mb-8">
           <p className="text-muted-foreground">
-            {filteredTrips.length} باقة متوفرة
+            {filteredTrips.length} {t('hikingCount') || 'باقة متوفرة'}
           </p>
         </div>
 
@@ -205,13 +208,17 @@ export default function HikingPage() {
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                 <Badge className={`absolute top-3 right-3 ${getDifficultyColor(trip.difficulty)}`}>
-                  {getDifficultyAr(trip.difficulty)}
+                  <Translate text={getDifficultyAr(trip.difficulty)} />
                 </Badge>
                 <div className="absolute bottom-3 right-3 left-3">
-                  <h3 className="text-lg font-bold text-white mb-1">{trip.nameAr}</h3>
+                  <h3 className="text-lg font-bold text-white mb-1">
+                    <Translate text={trip.nameAr} />
+                  </h3>
                   <div className="flex items-center gap-2 text-white/80 text-sm">
                     <MapPin className="w-4 h-4" />
-                    <span>{trip.location}</span>
+                    <span>
+                      <Translate text={trip.location} />
+                    </span>
                   </div>
                 </div>
               </div>
@@ -221,23 +228,27 @@ export default function HikingPage() {
                     <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
                     <span className="text-sm font-medium">{trip.rating}</span>
                   </div>
-                  <span className="text-lg font-bold text-primary">{trip.price} ر.ع</span>
+                  <span className="text-lg font-bold text-primary">{trip.price} {t('omr') || 'ر.ع'}</span>
                 </div>
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <div className="flex items-center gap-1">
                     <Clock className="w-4 h-4" />
-                    <span>{trip.duration}</span>
+                    <span>
+                      <Translate text={trip.duration} />
+                    </span>
                   </div>
                   <div className="flex items-center gap-1">
                     <Ruler className="w-4 h-4" />
-                    <span>{trip.distance}</span>
+                    <span>
+                      <Translate text={trip.distance} />
+                    </span>
                   </div>
                 </div>
                 <div className="mt-3 pt-3 border-t border-border">
                   <div className="flex flex-wrap gap-1">
-                    {trip.includes.slice(0, 3).map((item) => (
+                    {(trip.includes || []).slice(0, 3).map((item: string) => (
                       <Badge key={item} variant="secondary" className="text-xs">
-                        {item}
+                        <Translate text={item} />
                       </Badge>
                     ))}
                     {trip.includes.length > 3 && (

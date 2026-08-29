@@ -1,76 +1,77 @@
-import { useState, useEffect } from "react";
-import { Sun, Moon } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import React, { createContext, useContext, useEffect, useState } from 'react';
+import { Moon, Sun } from 'lucide-react';
 
-export default function ThemeToggle({ variant = "default" }: { variant?: "default" | "ghost" | "icon-only" }) {
-  const [isDark, setIsDark] = useState(() => {
-    const saved = localStorage.getItem("shouma-theme");
-    if (saved) return saved === "dark";
-    return false;
+type Theme = 'dark' | 'light';
+
+interface ThemeContextType {
+  theme: Theme;
+  isDark: boolean;
+  toggleTheme: () => void;
+  toggle: () => void;
+  setTheme: (theme: Theme) => void;
+}
+
+const ThemeContext = createContext<ThemeContextType>({
+  theme: 'dark',
+  isDark: true,
+  toggleTheme: () => {},
+  toggle: () => {},
+  setTheme: () => {},
+});
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [theme, setThemeState] = useState<Theme>(() => {
+    const saved = localStorage.getItem('shouma_theme');
+    return (saved as Theme) || 'dark';
   });
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (isDark) {
-      root.classList.add("dark");
+    localStorage.setItem('shouma_theme', theme);
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
     } else {
-      root.classList.remove("dark");
+      document.documentElement.classList.remove('dark');
     }
-    localStorage.setItem("shouma-theme", isDark ? "dark" : "light");
-  }, [isDark]);
+  }, [theme]);
 
-  useEffect(() => {
-    const saved = localStorage.getItem("shouma-theme");
-    if (saved === "dark") {
-      document.documentElement.classList.add("dark");
-    }
-  }, []);
+  const toggleTheme = () => {
+    setThemeState((prev) => (prev === 'dark' ? 'light' : 'dark'));
+  };
 
-  const toggle = () => setIsDark((prev) => !prev);
-
-  if (variant === "icon-only") {
-    return (
-      <button
-        onClick={toggle}
-        data-testid="button-theme-toggle"
-        className="w-10 h-10 rounded-full flex items-center justify-center text-amber-100 hover:text-white hover:bg-white/10 transition-colors"
-        aria-label={isDark ? "Light mode" : "Dark mode"}
-      >
-        {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-      </button>
-    );
-  }
+  const setTheme = (newTheme: Theme) => {
+    setThemeState(newTheme);
+  };
 
   return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={toggle}
-      data-testid="button-theme-toggle"
-      className="text-muted-foreground hover:text-foreground"
-      aria-label={isDark ? "Light mode" : "Dark mode"}
-    >
-      {isDark ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-    </Button>
+    <ThemeContext.Provider value={{ theme, isDark: theme === 'dark', toggleTheme, toggle: toggleTheme, setTheme }}>
+      {children}
+    </ThemeContext.Provider>
   );
 }
 
 export function useTheme() {
-  const [isDark, setIsDark] = useState(() => {
-    return localStorage.getItem("shouma-theme") === "dark";
-  });
+  return useContext(ThemeContext);
+}
 
-  const toggle = () => {
-    const newVal = !isDark;
-    setIsDark(newVal);
-    const root = document.documentElement;
-    if (newVal) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    localStorage.setItem("shouma-theme", newVal ? "dark" : "light");
-  };
+export interface ThemeToggleProps {
+  variant?: string;
+  className?: string;
+}
 
-  return { isDark, toggle };
+export default function ThemeToggle({ variant, className = "" }: ThemeToggleProps) {
+  const { theme, toggleTheme } = useTheme();
+
+  return (
+    <button
+      onClick={toggleTheme}
+      className={`p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition-all flex items-center gap-2 border border-slate-700 ${className}`}
+      title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+    >
+      {theme === 'dark' ? (
+        <Sun className="w-4 h-4 text-amber-400" />
+      ) : (
+        <Moon className="w-4 h-4 text-slate-300" />
+      )}
+    </button>
+  );
 }

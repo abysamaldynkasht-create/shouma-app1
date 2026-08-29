@@ -20,12 +20,14 @@ export default function LanguageSwitcher() {
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <Button 
-          variant="ghost" 
-          size="icon"
+          variant="outline" 
+          size="sm"
           data-testid="button-language-switcher"
-          className="text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold bg-background/80 backdrop-blur border-border/60 hover:bg-muted/80 rounded-full shadow-xs transition-all"
         >
-          <Globe className="w-5 h-5" />
+          <Globe className="w-4 h-4 text-amber-500" />
+          <span className="font-bold text-foreground">{currentLang?.flag || language.toUpperCase()}</span>
+          <span className="hidden sm:inline-block text-[11px] text-muted-foreground">{currentLang?.nativeName}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">

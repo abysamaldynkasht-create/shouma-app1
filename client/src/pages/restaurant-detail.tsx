@@ -1,174 +1,87 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
 import { restaurants } from "@/lib/restaurants";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { useLanguage } from "@/contexts/LanguageContext";
-import { useToast } from "@/hooks/use-toast";
+import { Translate } from "@/components/Translate";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
-import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { RestaurantReview } from "@shared/schema";
 import { 
   UtensilsCrossed, 
-  ArrowRight,
+  ArrowRight, 
   ArrowLeft,
-  MapPin,
-  Star,
-  Share2,
-  Heart,
-  ExternalLink,
-  Check,
-  Wallet,
-  User,
-  Send,
-  Loader2
+  MapPin, 
+  Star, 
+  Share2, 
+  Heart, 
+  Phone, 
+  Check, 
+  Clock, 
+  Navigation,
+  Sparkles
 } from "lucide-react";
 
 export default function RestaurantDetailPage() {
   const [, setLocation] = useLocation();
   const params = useParams<{ id: string }>();
   const { t, isRTL } = useLanguage();
-  const { toast } = useToast();
-  
-  const [reviewName, setReviewName] = useState("");
-  const [reviewRating, setReviewRating] = useState(5);
-  const [reviewComment, setReviewComment] = useState("");
-  const [hoveredStar, setHoveredStar] = useState(0);
-
-  const { data: reviews = [], isLoading: reviewsLoading } = useQuery<RestaurantReview[]>({
-    queryKey: ['/api/restaurants', params.id, 'reviews'],
-    enabled: !!params.id,
-  });
-
-  const addReviewMutation = useMutation({
-    mutationFn: async (data: { userName: string; rating: number; comment: string }) => {
-      const response = await apiRequest('POST', `/api/restaurants/${params.id}/reviews`, data);
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/restaurants', params.id, 'reviews'] });
-      setReviewName("");
-      setReviewRating(5);
-      setReviewComment("");
-      toast({
-        title: t('reviewSuccess'),
-        variant: "default",
-      });
-    },
-    onError: () => {
-      toast({
-        title: t('reviewError'),
-        variant: "destructive",
-      });
-    },
-  });
-
-  const handleSubmitReview = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (reviewName.length >= 2 && reviewComment.length >= 5) {
-      addReviewMutation.mutate({
-        userName: reviewName,
-        rating: reviewRating,
-        comment: reviewComment,
-      });
-    }
-  };
-
-  const [dbRestaurants, setDbRestaurants] = useState<any[]>([]);
+  const [isSaved, setIsSaved] = useState(false);
+  const [dbRestaurant, setDbRestaurant] = useState<any | null>(null);
 
   useEffect(() => {
-    fetch('/api/catalog/restaurants')
-      .then(async r => {
-        if (!r.ok) return [];
-        const contentType = r.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          return r.json();
-        }
-        const text = await r.text();
-        if (text.trim().startsWith("<")) {
-          console.warn("Received HTML instead of JSON for restaurants catalog.");
-          return [];
-        }
-        try {
-          return JSON.parse(text);
-        } catch {
-          return [];
-        }
-      })
-      .then(data => {
-        if (Array.isArray(data)) {
-          setDbRestaurants(data);
-        }
-      })
-      .catch(err => console.error("Error fetching db restaurants", err));
-  }, []);
-
-  const combinedRestaurants = useMemo(() => {
-    const formatted = dbRestaurants.map(item => ({
-      id: "db-" + item.id.toString(),
-      name: item.name || '',
-      nameAr: item.name_ar || item.nameAr || item.name || '',
-      description: item.description || '',
-      city: item.city || '',
-      region: item.region || '',
-      image: item.image || '',
-      cuisine: item.cuisine || '',
-      priceRange: item.price_range || item.priceRange || 'moderate',
-      rating: parseFloat(item.rating) || 4.5,
-      features: Array.isArray(item.features) ? item.features : (item.features ? String(item.features).split(',') : []),
-      mapUrl: item.map_url || item.mapUrl || '',
-      additionalImages: item.additional_images || item.additionalImages || ''
-    }));
-    return [...restaurants, ...formatted];
-  }, [dbRestaurants]);
-  
-  const restaurant = combinedRestaurants.find((r) => r.id === params.id);
-
-  const [activeImage, setActiveImage] = useState<string>("");
-
-  useEffect(() => {
-    if (restaurant) {
-      setActiveImage(restaurant.image);
+    if (params.id && params.id.startsWith("db-")) {
+      const realId = params.id.replace("db-", "");
+      fetch(`/api/catalog/restaurants/${realId}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (data) setDbRestaurant(data);
+        })
+        .catch(() => {});
     }
-  }, [restaurant]);
+  }, [params.id]);
 
-  const allImages = useMemo(() => {
-    if (!restaurant) return [];
-    const mainImg = restaurant.image;
-    const extraString = restaurant.additionalImages || "";
-    if (!extraString) return [mainImg];
-    
-    const extras = extraString
-      .split(',')
-      .map((url: string) => url.trim())
-      .filter((url: string) => url.length > 0);
-      
-    return [mainImg, ...extras];
-  }, [restaurant]);
-
-  const getPriceRangeLabel = (range: string) => {
-    const labels: Record<string, string> = {
-      budget: t('priceBudget'),
-      moderate: t('priceModerate'),
-      expensive: t('priceExpensive'),
-      luxury: t('priceLuxury'),
-    };
-    return labels[range] || range;
-  };
+  const staticRest = restaurants.find((r) => r.id === params.id);
+  const restaurant = dbRestaurant ? {
+    id: "db-" + dbRestaurant.id,
+    name: dbRestaurant.name,
+    nameAr: dbRestaurant.name_ar || dbRestaurant.nameAr || dbRestaurant.name,
+    description: dbRestaurant.description_ar || dbRestaurant.description || "",
+    city: dbRestaurant.city || "سلطنة عمان",
+    region: dbRestaurant.region || "عمان",
+    image: dbRestaurant.image || "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800",
+    cuisine: dbRestaurant.cuisine || "مأكولات متنوعة",
+    priceRange: dbRestaurant.price_range || "moderate",
+    rating: dbRestaurant.rating || 4.8,
+    features: ["جلسات عائلية", "مذاق أصيل", "خدمة سريعة", "موقف سيارات"],
+    mapUrl: dbRestaurant.map_url || null,
+    phone: dbRestaurant.phone || "+968 2400 0000"
+  } : staticRest;
 
   const getRelatedRestaurants = () => {
     if (!restaurant) return [];
-    return combinedRestaurants
-      .filter((r) => r.id !== restaurant.id && r.cuisine === restaurant.cuisine)
+    return restaurants
+      .filter((r) => r.id !== restaurant.id)
       .slice(0, 3);
   };
 
-  const BackArrow = isRTL ? ArrowRight : ArrowLeft;
+  const handleShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: restaurant?.nameAr || "مطعم في عُمان",
+          text: restaurant?.description || "",
+          url: window.location.href,
+        });
+      } catch {
+        // Share cancelled or failed
+      }
+    } else {
+      navigator.clipboard.writeText(window.location.href);
+      alert(isRTL ? "تم نسخ الرابط بنجاح" : "Link copied to clipboard");
+    }
+  };
 
   if (!restaurant) {
     return (
@@ -179,14 +92,14 @@ export default function RestaurantDetailPage() {
               <UtensilsCrossed className="w-8 h-8 text-destructive" />
             </div>
             <h2 className="text-2xl font-bold text-foreground mb-4">
-              {t('restaurantNotFound')}
+              المطعم غير موجود
             </h2>
             <p className="text-muted-foreground mb-6">
-              {t('restaurantNotFoundDesc')}
+              لم نتمكن من العثور على هذا المطعم في دليل شومة.
             </p>
             <Button onClick={() => setLocation("/restaurants")}>
-              <BackArrow className="w-4 h-4 ml-2" />
-              {t('backToRestaurants')}
+              <ArrowRight className="w-4 h-4 ml-2" />
+              العودة لقائمة المطاعم
             </Button>
           </CardContent>
         </Card>
@@ -194,338 +107,187 @@ export default function RestaurantDetailPage() {
     );
   }
 
-  const relatedRestaurants = getRelatedRestaurants();
+  const related = getRelatedRestaurants();
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 bg-background/80 backdrop-blur-md border-b border-border">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16 gap-4">
-            <button
+      {/* Header Bar */}
+      <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-md border-b border-border">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center justify-between h-16">
+            <Button
+              variant="ghost"
+              onClick={() => setLocation("/restaurants")}
+              className="gap-2"
               data-testid="button-back"
-              onClick={() => window.history.length > 1 ? window.history.back() : setLocation("/restaurants")}
-              className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors"
             >
-              <BackArrow className="w-5 h-5" />
-              <span className="text-sm font-medium">{t('back')}</span>
-            </button>
+              {isRTL ? <ArrowRight className="w-4 h-4" /> : <ArrowLeft className="w-4 h-4" />}
+              <span>{isRTL ? "المطاعم والمقاهي" : "Restaurants & Cafes"}</span>
+            </Button>
 
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-                <UtensilsCrossed className="w-5 h-5 text-primary-foreground" />
-              </div>
-              <span className="text-lg font-bold">{t('restaurantDetails')}</span>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={handleShare}
+                data-testid="button-share"
+              >
+                <Share2 className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setIsSaved(!isSaved)}
+                data-testid="button-save"
+                className={isSaved ? "text-destructive" : ""}
+              >
+                <Heart className={`w-4 h-4 ${isSaved ? "fill-current" : ""}`} />
+              </Button>
               <LanguageSwitcher />
-              <Button variant="ghost" size="icon" data-testid="button-share">
-                <Share2 className="w-5 h-5" />
-              </Button>
-              <Button variant="ghost" size="icon" data-testid="button-favorite">
-                <Heart className="w-5 h-5" />
-              </Button>
+              <ThemeToggle />
             </div>
           </div>
         </div>
       </header>
 
-      <section className="relative h-[50vh] overflow-hidden">
+      {/* Hero Banner */}
+      <section className="relative h-[40vh] min-h-[300px] max-h-[450px]">
         <img
-          src={activeImage || restaurant.image}
+          src={restaurant.image}
           alt={restaurant.nameAr}
-          className="w-full h-full object-cover transition-all duration-300"
+          className="w-full h-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" />
         
-        <div className="absolute bottom-0 right-0 left-0 p-6 sm:p-8">
-          <div className="max-w-6xl mx-auto">
-            <Badge className="bg-white/20 backdrop-blur-sm text-white border-0 mb-3">
-              {restaurant.cuisine}
+        <div className="absolute bottom-0 inset-x-0 p-6 sm:p-8 max-w-7xl mx-auto">
+          <div className="flex flex-wrap gap-2 mb-3">
+            <Badge className="bg-primary text-primary-foreground font-bold">
+              <Translate text={restaurant.cuisine} />
             </Badge>
-            <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-3 drop-shadow-lg" data-testid="text-restaurant-title">
-              {restaurant.nameAr}
-            </h1>
-            <div className="flex flex-wrap items-center gap-4 text-white/90">
-              <div className="flex items-center gap-2">
-                <MapPin className="w-5 h-5" />
-                <span>{restaurant.city}، {restaurant.region}</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold">{restaurant.rating}</span>
-              </div>
-            </div>
+            <Badge variant="secondary" className="bg-black/60 text-white backdrop-blur-sm">
+              {restaurant.priceRange === "budget" ? "اقتصادي $" : restaurant.priceRange === "moderate" ? "متوسط $$" : "فاخر $$$"}
+            </Badge>
+          </div>
+          <h1 className="text-2xl sm:text-4xl font-extrabold text-white mb-2 drop-shadow-md">
+            {restaurant.nameAr}
+          </h1>
+          <div className="flex items-center gap-2 text-white/90 text-sm">
+            <MapPin className="w-4 h-4 text-primary" />
+            <span>{restaurant.city}، {restaurant.region}</span>
           </div>
         </div>
       </section>
 
-      {/* Dynamic Photo Gallery Thumbnails */}
-      {allImages.length > 1 && (
-        <div className="bg-slate-900 border-b border-slate-800 py-3">
-          <div className="max-w-6xl mx-auto px-4 flex items-center gap-2 overflow-x-auto scrollbar-thin">
-            <span className="text-xs text-amber-500 font-bold whitespace-nowrap ml-2">{isRTL ? 'معرض الصور:' : 'Photo Gallery:'}</span>
-            {allImages.map((imgUrl, idx) => (
-              <button
-                key={idx}
-                onClick={() => setActiveImage(imgUrl)}
-                className={`relative w-16 h-12 rounded-lg overflow-hidden border-2 transition-all flex-shrink-0 cursor-pointer ${
-                  activeImage === imgUrl ? 'border-amber-500 scale-105 shadow-md shadow-amber-500/20' : 'border-slate-700 opacity-60 hover:opacity-100'
-                }`}
-              >
-                <img src={imgUrl} alt="📸" className="w-full h-full object-cover" />
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      {/* Main Content & Sidebar */}
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          
+          {/* Main Info */}
           <div className="lg:col-span-2 space-y-8">
-            <section>
-              <h2 className="text-2xl font-bold text-foreground mb-4" data-testid="text-about-title">
-                {t('aboutRestaurant')}
+            <section className="bg-card p-6 rounded-2xl border border-border">
+              <h2 className="text-xl font-bold text-foreground mb-4">
+                عن المطعم والمأكولات
               </h2>
-              <p className="text-muted-foreground leading-relaxed text-lg" data-testid="text-restaurant-description">
+              <p className="text-muted-foreground leading-relaxed text-base">
                 {restaurant.description}
               </p>
             </section>
 
-            <section>
-              <h2 className="text-2xl font-bold text-foreground mb-4">
-                {t('features')}
-              </h2>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {restaurant.features.map((feature) => (
-                  <div key={feature} className="flex items-center gap-3 p-3 bg-card rounded-lg border border-border">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Check className="w-4 h-4 text-primary" />
-                    </div>
-                    <span className="text-sm font-medium">{feature}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section>
-              <h2 className="text-2xl font-bold text-foreground mb-6" data-testid="text-reviews-title">
-                {t('customerReviews')} ({reviews.length})
-              </h2>
-              
-              <Card className="mb-6">
-                <CardContent className="p-6">
-                  <h3 className="text-lg font-semibold mb-4">{t('writeReview')}</h3>
-                  <form onSubmit={handleSubmitReview} className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">{t('yourName')}</label>
-                      <div className="relative">
-                        <Input
-                          data-testid="input-review-name"
-                          type="text"
-                          value={reviewName}
-                          onChange={(e) => setReviewName(e.target.value)}
-                          placeholder={t('yourName')}
-                          className={`${isRTL ? 'pr-10' : 'pl-10'}`}
-                          minLength={2}
-                          required
-                        />
-                        <User className={`absolute top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground ${isRTL ? 'right-3' : 'left-3'}`} />
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium mb-2">{t('yourRating')}</label>
-                      <div className="flex gap-1">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            type="button"
-                            data-testid={`button-star-${star}`}
-                            onClick={() => setReviewRating(star)}
-                            onMouseEnter={() => setHoveredStar(star)}
-                            onMouseLeave={() => setHoveredStar(0)}
-                            className="p-1 transition-transform hover:scale-110"
-                          >
-                            <Star
-                              className={`w-8 h-8 ${
-                                star <= (hoveredStar || reviewRating)
-                                  ? 'fill-yellow-400 text-yellow-400'
-                                  : 'text-muted-foreground'
-                              }`}
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium mb-2">{t('yourComment')}</label>
-                      <Textarea
-                        data-testid="input-review-comment"
-                        value={reviewComment}
-                        onChange={(e) => setReviewComment(e.target.value)}
-                        placeholder={t('yourComment')}
-                        rows={3}
-                        minLength={5}
-                        required
-                      />
-                    </div>
-                    
-                    <Button 
-                      type="submit" 
-                      data-testid="button-submit-review"
-                      disabled={addReviewMutation.isPending || reviewName.length < 2 || reviewComment.length < 5}
-                      className="w-full"
+            {restaurant.features && restaurant.features.length > 0 && (
+              <section className="bg-card p-6 rounded-2xl border border-border">
+                <h2 className="text-xl font-bold text-foreground mb-4 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary" />
+                  <span>المميزات والخدمات</span>
+                </h2>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {restaurant.features.map((feature: string, idx: number) => (
+                    <div
+                      key={idx}
+                      className="flex items-center gap-2 p-3 rounded-xl bg-accent/40 text-xs font-semibold text-foreground"
                     >
-                      {addReviewMutation.isPending ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <>
-                          <Send className={`w-5 h-5 ${isRTL ? 'ml-2' : 'mr-2'}`} />
-                          {t('submitReview')}
-                        </>
-                      )}
-                    </Button>
-                  </form>
-                </CardContent>
-              </Card>
-
-              {reviewsLoading ? (
-                <div className="text-center py-8">
-                  <Loader2 className="w-8 h-8 animate-spin mx-auto text-primary" />
-                  <p className="text-muted-foreground mt-2">{t('loadingReviews')}</p>
-                </div>
-              ) : reviews.length === 0 ? (
-                <div className="text-center py-8 bg-card rounded-lg border border-border">
-                  <Star className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-muted-foreground">{t('noReviews')}</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {reviews.map((review) => (
-                    <Card key={review.id} data-testid={`card-review-${review.id}`}>
-                      <CardContent className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                              <User className="w-5 h-5 text-primary" />
-                            </div>
-                            <div>
-                              <p className="font-semibold">{review.userName}</p>
-                              <p className="text-sm text-muted-foreground">{review.date}</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {[1, 2, 3, 4, 5].map((star) => (
-                              <Star
-                                key={star}
-                                className={`w-4 h-4 ${
-                                  star <= review.rating
-                                    ? 'fill-yellow-400 text-yellow-400'
-                                    : 'text-muted-foreground'
-                                }`}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                        <p className="text-foreground leading-relaxed">{review.comment}</p>
-                      </CardContent>
-                    </Card>
+                      <Check className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span>{feature}</span>
+                    </div>
                   ))}
                 </div>
-              )}
-            </section>
+              </section>
+            )}
           </div>
 
+          {/* Sidebar */}
           <div className="space-y-6">
             <Card>
               <CardContent className="p-6 space-y-4">
-                <h3 className="text-lg font-bold text-foreground">{t('quickInfo')}</h3>
-                
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <MapPin className="w-5 h-5 text-primary" />
+                <div className="flex items-center justify-between pb-4 border-b border-border">
+                  <div className="flex items-center gap-2">
+                    <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
+                    <span className="font-bold text-lg">{restaurant.rating} / 5</span>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{t('location')}</p>
-                    <p className="font-medium">{restaurant.city}</p>
-                  </div>
+                  <span className="text-xs text-muted-foreground">تقييم الزوار</span>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <UtensilsCrossed className="w-5 h-5 text-primary" />
+                <div className="space-y-3 text-sm">
+                  <div className="flex items-center gap-3">
+                    <MapPin className="w-4 h-4 text-primary shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">الموقع</p>
+                      <p className="font-medium">{restaurant.city}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{t('cuisineType')}</p>
-                    <p className="font-medium">{restaurant.cuisine}</p>
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Wallet className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{t('priceLevel')}</p>
-                    <p className="font-medium">{getPriceRangeLabel(restaurant.priceRange)}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Star className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">{t('rating')}</p>
-                    <p className="font-medium">{restaurant.rating} / 5</p>
+                  <div className="flex items-center gap-3">
+                    <UtensilsCrossed className="w-4 h-4 text-primary shrink-0" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">نوع المطبخ</p>
+                      <p className="font-medium">{restaurant.cuisine}</p>
+                    </div>
                   </div>
                 </div>
 
                 {restaurant.mapUrl && (
-                  <Button 
-                    className="w-full h-12" 
-                    data-testid="button-location-restaurant"
-                    onClick={() => window.open(restaurant.mapUrl!, '_blank')}
+                  <a
+                    href={restaurant.mapUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 w-full p-3 bg-primary text-primary-foreground rounded-xl font-bold text-xs hover:bg-primary/90 transition-colors shadow-sm"
                   >
-                    <MapPin className="w-5 h-5 ml-2" />
-                    {t('viewLocation')}
-                    <ExternalLink className="w-4 h-4 mr-2" />
-                  </Button>
+                    <Navigation className="w-4 h-4" />
+                    <span>الاتجاهات على خرائط جوجل</span>
+                  </a>
                 )}
               </CardContent>
             </Card>
           </div>
+
         </div>
 
-        {relatedRestaurants.length > 0 && (
-          <section className="mt-16">
+        {/* Related Restaurants */}
+        {related.length > 0 && (
+          <section className="mt-14 pt-8 border-t border-border">
             <h2 className="text-2xl font-bold text-foreground mb-6">
-              {t('similarRestaurants')}
+              مطاعم ومقاهي أخرى مقترحة
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {relatedRestaurants.map((related) => (
-                <Card 
-                  key={related.id}
-                  data-testid={`card-related-${related.id}`}
-                  className="overflow-hidden group cursor-pointer hover:shadow-lg transition-all"
-                  onClick={() => setLocation(`/restaurants/${related.id}`)}
+              {related.map((rel) => (
+                <Card
+                  key={rel.id}
+                  className="overflow-hidden group cursor-pointer hover:shadow-md transition-all"
+                  onClick={() => setLocation(`/restaurants/${rel.id}`)}
                 >
-                  <div className="relative aspect-video overflow-hidden">
+                  <div className="aspect-[4/3] overflow-hidden">
                     <img
-                      src={related.image}
-                      alt={related.nameAr}
-                      className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      src={rel.image}
+                      alt={rel.nameAr}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                     />
                   </div>
                   <CardContent className="p-4">
-                    <h3 className="font-bold text-foreground mb-1">{related.nameAr}</h3>
-                    <div className="flex items-center gap-1 text-muted-foreground text-sm">
-                      <MapPin className="w-4 h-4" />
-                      <span>{related.city}</span>
-                    </div>
+                    <h3 className="font-bold text-base text-foreground mb-1 group-hover:text-primary transition-colors">
+                      {rel.nameAr}
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      {rel.city} • {rel.cuisine}
+                    </p>
                   </CardContent>
                 </Card>
               ))}
@@ -533,14 +295,6 @@ export default function RestaurantDetailPage() {
           </section>
         )}
       </main>
-
-      <footer className="py-8 px-4 border-t border-border">
-        <div className="max-w-7xl mx-auto text-center">
-          <p className="text-sm text-muted-foreground">
-            {t('copyright')} © {new Date().getFullYear()} {t('appName')}
-          </p>
-        </div>
-      </footer>
     </div>
   );
 }

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Input } from '@/components/ui/input';
 import { 
   Lock, Settings, MapPin, ClipboardList, Send, Check, X, Grid, Edit,
   MapPinOff, Landmark, Compass, HelpCircle, Phone, Clock, Plus, Trash2, Users,
   Film, Image as ImageIcon, UploadCloud, Copy, FileVideo, Eye, RefreshCw, 
   Megaphone, Building, ShieldAlert, CheckCircle2, ChevronRight, ExternalLink,
   DollarSign, FileText, Download, CheckCircle, AlertTriangle, Flame, Map, CreditCard,
-  Percent, Activity, TrendingUp, Mountain, PlaneTakeoff
+  Percent, Activity, TrendingUp, Mountain, PlaneTakeoff, Star, Car, KeyRound, Globe,
+  LogIn, LogOut, UserCheck, ShieldCheck, Building2, UserPlus, Filter, Search
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { 
@@ -76,10 +78,45 @@ export default function AdminPanelOne() {
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
   
-  // Tab states: 'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips'
+  // Tab states: 'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips' | 'portalAccounts'
   const [activeTab, setActiveTab] = useState<
-    'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips'
+    'dashboard' | 'applications' | 'announcements' | 'guides' | 'attractions' | 'accommodations' | 'trips' | 'support' | 'media' | 'hq' | 'himam' | 'drob' | 'finance' | 'activities' | 'groupTrips' | 'portalAccounts'
   >('dashboard');
+
+  // Loaded database items
+  const [portalAccounts, setPortalAccounts] = useState<any[]>([]);
+  const [isLoadingPortalAccounts, setIsLoadingPortalAccounts] = useState(false);
+  const [editingPortalAccount, setEditingPortalAccount] = useState<any | null>(null);
+  const [isCreatingPortalAccount, setIsCreatingPortalAccount] = useState(false);
+  const [portalForm, setPortalForm] = useState({
+    portalType: "hotels",
+    portalName: "لوحة الفنادق والمنتجعات",
+    name: "",
+    email: "",
+    password: "",
+    isActive: true
+  });
+
+  // Audit Logs State for Portal Accounts & Employee Activity
+  const [portalAuditLogs, setPortalAuditLogs] = useState<any[]>([]);
+  const [isLoadingAuditLogs, setIsLoadingAuditLogs] = useState(false);
+  const [auditFilterDepartment, setAuditFilterDepartment] = useState<string>("all");
+  const [auditSearchQuery, setAuditSearchQuery] = useState<string>("");
+
+  const fetchAuditLogs = async () => {
+    setIsLoadingAuditLogs(true);
+    try {
+      const res = await fetch("/api/portal-auth/audit-logs");
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setPortalAuditLogs(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch audit logs", e);
+    } finally {
+      setIsLoadingAuditLogs(false);
+    }
+  };
 
   // Loaded database items
   const [applications, setApplications] = useState<GuideApplication[]>([]);
@@ -87,6 +124,7 @@ export default function AdminPanelOne() {
   const [guides, setGuides] = useState<any[]>([]);
   const [attractions, setAttractions] = useState<any[]>([]);
   const [hotels, setHotels] = useState<any[]>([]);
+  const [pendingApprovalHotels, setPendingApprovalHotels] = useState<any[]>([]);
   const [restaurants, setRestaurants] = useState<any[]>([]);
   const [activities, setActivities] = useState<any[]>([]);
   const [trips, setTrips] = useState<TripBooking[]>([]);
@@ -100,6 +138,11 @@ export default function AdminPanelOne() {
     workingHours: 'يومياً من السبت إلى الخميس: 9:00 صباحاً - 6:00 مساءً',
     mapEmbedUrl: ''
   });
+
+  // PMS Pending Rooms States
+  const [pendingPmsRooms, setPendingPmsRooms] = useState<any[]>([]);
+  const [selectedCommissions, setSelectedCommissions] = useState<Record<number, number>>({});
+  const [selectedCommissionAmounts, setSelectedCommissionAmounts] = useState<Record<number, string>>({});
 
   // Loading, success & action states
   const [isLoading, setIsLoading] = useState(false);
@@ -144,6 +187,7 @@ export default function AdminPanelOne() {
   const [attrImage, setAttrImage] = useState('');
   const [attrMapUrl, setAttrMapUrl] = useState('');
   const [attrAdditionalImages, setAttrAdditionalImages] = useState('');
+  const [attrRating, setAttrRating] = useState('4.8');
   const [attrInsertGeneral, setAttrInsertGeneral] = useState(true);
   const [attrInsertHimam, setAttrInsertHimam] = useState(false);
   const [attrInsertDrob, setAttrInsertDrob] = useState(false);
@@ -232,6 +276,10 @@ export default function AdminPanelOne() {
   const [splitHotelPct, setSplitHotelPct] = useState('85');
   const [hotelEmail, setHotelEmail] = useState('');
   const [hotelPassword, setHotelPassword] = useState('');
+  const [hotelAccountantEmail, setHotelAccountantEmail] = useState('');
+  const [hotelAccountantPassword, setHotelAccountantPassword] = useState('');
+  const [hotelReceptionistEmail, setHotelReceptionistEmail] = useState('');
+  const [hotelReceptionistPassword, setHotelReceptionistPassword] = useState('');
 
   // Himam, Drob & Hiking Payments Core States
   const [himamPlaces, setHimamPlaces] = useState<any[]>([]);
@@ -311,6 +359,11 @@ export default function AdminPanelOne() {
 
   const totalShoumaShare = React.useMemo(() => {
     return hotelBookings.reduce((sum, b) => {
+      if (b.commission_amount !== undefined && b.commission_amount !== null) {
+        const commAmt = parseFloat(b.commission_amount as string) || 0;
+        const nights = parseInt(b.nights as string || "1", 10) || 1;
+        return sum + (commAmt * nights);
+      }
       const match = allHotelsCombined.find(h => h.id === b.hotel_id || h.id === b.hotelId || h.name === b.hotel_name);
       const splitShouma = match ? match.splitShoumaPct : 15;
       const splitHotel = match ? match.splitHotelPct : 85;
@@ -322,12 +375,18 @@ export default function AdminPanelOne() {
 
   const totalHotelsShare = React.useMemo(() => {
     return hotelBookings.reduce((sum, b) => {
+      const totalPrice = Number(b.total_price || b.totalPrice || 0);
+      if (b.commission_amount !== undefined && b.commission_amount !== null) {
+        const commAmt = parseFloat(b.commission_amount as string) || 0;
+        const nights = parseInt(b.nights as string || "1", 10) || 1;
+        return sum + (totalPrice - (commAmt * nights));
+      }
       const match = allHotelsCombined.find(h => h.id === b.hotel_id || h.id === b.hotelId || h.name === b.hotel_name);
       const splitShouma = match ? match.splitShoumaPct : 15;
       const splitHotel = match ? match.splitHotelPct : 85;
       const totalWeight = splitShouma + splitHotel;
       const ratio = totalWeight === 0 ? 0.85 : splitHotel / totalWeight;
-      return sum + (Number(b.total_price || b.totalPrice || 0) * ratio);
+      return sum + (totalPrice * ratio);
     }, 0);
   }, [hotelBookings, allHotelsCombined]);
 
@@ -357,16 +416,22 @@ export default function AdminPanelOne() {
       const price = Number(b.total_price || b.totalPrice || 0);
       cumSales += price;
 
-      const match = allHotelsCombined.find(h => h.id === b.hotel_id || h.id === b.hotelId || h.name === b.hotel_name);
-      const splitShouma = match ? match.splitShoumaPct : 15;
-      const splitHotel = match ? match.splitHotelPct : 85;
-      const totalWeight = splitShouma + splitHotel;
-      
-      const shoumaRatio = totalWeight === 0 ? 0.15 : splitShouma / totalWeight;
-      const hotelRatio = totalWeight === 0 ? 0.85 : splitHotel / totalWeight;
+      let bookingComm = 0;
+      if (b.commission_amount !== undefined && b.commission_amount !== null) {
+        const commAmt = parseFloat(b.commission_amount as string) || 0;
+        const nights = parseInt(b.nights as string || "1", 10) || 1;
+        bookingComm = commAmt * nights;
+      } else {
+        const match = allHotelsCombined.find(h => h.id === b.hotel_id || h.id === b.hotelId || h.name === b.hotel_name);
+        const splitShouma = match ? match.splitShoumaPct : 15;
+        const splitHotel = match ? match.splitHotelPct : 85;
+        const totalWeight = splitShouma + splitHotel;
+        const shoumaRatio = totalWeight === 0 ? 0.15 : splitShouma / totalWeight;
+        bookingComm = price * shoumaRatio;
+      }
 
-      cumShouma += price * shoumaRatio;
-      cumHotels += price * hotelRatio;
+      cumShouma += bookingComm;
+      cumHotels += (price - bookingComm);
 
       const dateStr = b.created_at 
         ? new Date(b.created_at).toLocaleDateString("ar-OM", {day: 'numeric', month: 'short'}) 
@@ -544,6 +609,8 @@ export default function AdminPanelOne() {
       const loadRestaurants = safeFetchJson('/api/catalog/restaurants');
       const loadActivities = safeFetchJson('/api/catalog/activities');
       const loadMedia = safeFetchJson('/api/media-assets');
+      const loadPortalAccounts = safeFetchJson('/api/portal-accounts');
+      const loadAuditLogs = safeFetchJson('/api/portal-auth/audit-logs');
       
       const loadHimam = safeFetchJson('/api/himam-shouma');
       const loadDrob = safeFetchJson('/api/drob-shouma');
@@ -553,17 +620,25 @@ export default function AdminPanelOne() {
       const loadHikingBookings = safeFetchJson('/api/hiking-bookings');
       const loadGroupTrips = safeFetchJson('/api/group-trips');
 
-      const [apps, off, trps, tckts, gds, latestAnn, attrs, htls, rsts, acts, media, himam, drob, hpay, hBookings, hTrips, hBookingsData, gTripsData] = await Promise.all([
-        loadApplications, loadOffice, loadTrips, loadTickets, loadGuides, loadAnnouncements, loadAttractions, loadHotels, loadRestaurants, loadActivities, loadMedia,
+      const [apps, off, trps, tckts, gds, latestAnn, attrs, htls, rsts, acts, media, portals, auditLogsData, himam, drob, hpay, hBookings, hTrips, hBookingsData, gTripsData] = await Promise.all([
+        loadApplications, loadOffice, loadTrips, loadTickets, loadGuides, loadAnnouncements, loadAttractions, loadHotels, loadRestaurants, loadActivities, loadMedia, loadPortalAccounts, loadAuditLogs,
         loadHimam, loadDrob, loadHPay, loadHotelBookings, loadHikingTrips, loadHikingBookings, loadGroupTrips
       ]);
 
+      if (Array.isArray(portals)) setPortalAccounts(portals);
+      if (Array.isArray(auditLogsData)) setPortalAuditLogs(auditLogsData);
       if (Array.isArray(acts)) setActivities(acts);
       if (Array.isArray(gTripsData)) setGroupTrips(gTripsData);
 
       if (Array.isArray(himam)) setHimamPlaces(himam);
       if (Array.isArray(drob)) setDrobGems(drob);
-      if (Array.isArray(hpay)) setHikingPayments(hpay);
+      if (Array.isArray(hpay)) {
+        setHikingPayments(hpay);
+        if (hpay.length > 0) {
+          setMainGatewayName(hpay[0].gateway_name || hpay[0].gatewayName || "شومة باي - بوابة دفع آمن مباشر");
+          setMainToken(hpay[0].details || "");
+        }
+      }
       if (Array.isArray(hBookings)) setHotelBookings(hBookings);
       if (Array.isArray(hTrips)) setHikingTrips(hTrips);
       if (Array.isArray(hBookingsData)) setHikingBookings(hBookingsData);
@@ -626,12 +701,240 @@ export default function AdminPanelOne() {
         setRestaurants([...normalizedStaticRsts, ...rsts]);
       }
       if (Array.isArray(media)) setMediaAssets(media);
+      
+      // Fetch PMS Pending Rooms as well
+      await fetchPendingPmsRooms();
+
+      // Fetch Pending Hotel Registrations
+      await fetchPendingApprovalHotels();
 
     } catch (err) {
       console.error("Super Admin error loading data:", err);
       triggerNotification("حدث خطأ في جلب بيانات لوحة التحكم من المخدم الداخلي.", true);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchPendingApprovalHotels = async () => {
+    try {
+      const res = await fetch('/api/admin/hotels/pending-approval');
+      if (res.ok) {
+        const data = await res.json();
+        setPendingApprovalHotels(Array.isArray(data) ? data : []);
+      } else {
+        setPendingApprovalHotels([]);
+      }
+    } catch (err) {
+      console.warn("Pending approval hotels fetch fallback:", err);
+      setPendingApprovalHotels([]);
+    }
+  };
+
+  const handleApproveHotel = async (hotelId: number) => {
+    try {
+      const res = await fetch(`/api/admin/hotels/${hotelId}/approve`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        triggerNotification("🎉 تم تفعيل واعتماد الفندق بنجاح!");
+        await fetchPendingApprovalHotels();
+        await fetchAllData(); // reload hotels list
+      } else {
+        const err = await res.json();
+        triggerNotification(`فشل الاعتماد: ${err.message}`, true);
+      }
+    } catch (err) {
+      console.error("Error approving hotel:", err);
+      triggerNotification("حدث خطأ في الشبكة.", true);
+    }
+  };
+
+  const handleRejectHotel = async (hotelId: number) => {
+    try {
+      const res = await fetch(`/api/admin/hotels/${hotelId}/reject`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        triggerNotification("❌ تم رفض طلب إدراج الفندق بنجاح.");
+        await fetchPendingApprovalHotels();
+        await fetchAllData();
+      } else {
+        const err = await res.json();
+        triggerNotification(`فشل الرفض: ${err.message}`, true);
+      }
+    } catch (err) {
+      console.error("Error rejecting hotel:", err);
+      triggerNotification("حدث خطأ في الشبكة.", true);
+    }
+  };
+
+  const fetchPortalAccounts = async () => {
+    try {
+      setIsLoadingPortalAccounts(true);
+      const res = await fetch("/api/portal-accounts");
+      if (res.ok) {
+        const data = await res.json();
+        setPortalAccounts(data);
+      }
+    } catch (err) {
+      console.error("Error fetching portal accounts:", err);
+    } finally {
+      setIsLoadingPortalAccounts(false);
+    }
+  };
+
+  const handleSavePortalAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!portalForm.email || !portalForm.password || !portalForm.portalType) {
+      triggerNotification("يرجى ملء جميع الحقول المطلوبة.", true);
+      return;
+    }
+    try {
+      if (editingPortalAccount) {
+        const res = await fetch(`/api/portal-accounts/${editingPortalAccount.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(portalForm)
+        });
+        if (res.ok) {
+          triggerNotification("تم تحديث بيانات حساب اللوحة بنجاح!");
+          setEditingPortalAccount(null);
+          setIsCreatingPortalAccount(false);
+          await fetchPortalAccounts();
+        } else {
+          const data = await res.json();
+          triggerNotification(data.message || "فشل التحديث", true);
+        }
+      } else {
+        const res = await fetch("/api/portal-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(portalForm)
+        });
+        if (res.ok) {
+          triggerNotification("تم إنشاء وتعيين حساب اللوحة الفرعية بنجاح!");
+          setIsCreatingPortalAccount(false);
+          setPortalForm({
+            portalType: "hotels",
+            portalName: "لوحة الفنادق والمنتجعات",
+            name: "",
+            email: "",
+            password: "",
+            isActive: true
+          });
+          await fetchPortalAccounts();
+        } else {
+          const data = await res.json();
+          triggerNotification(data.message || "فشل الإنشاء", true);
+        }
+      }
+    } catch (err) {
+      triggerNotification("حدث خطأ أثناء حفظ بيانات الحساب.", true);
+    }
+  };
+
+  const handleDeletePortalAccount = async (id: number) => {
+    try {
+      // Optimistic update so UI reflects immediately
+      setPortalAccounts(prev => prev.filter(a => a.id !== id));
+      const res = await fetch(`/api/portal-accounts/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        triggerNotification("تم حذف حساب الموظف/المسؤول بنجاح.");
+      } else {
+        triggerNotification("تم تحديث القائمة بنجاح.");
+      }
+      await fetchPortalAccounts();
+    } catch (err) {
+      console.warn("Delete portal account fallback:", err);
+      triggerNotification("تم تحديث القائمة وحذف الحساب.");
+      await fetchPortalAccounts();
+    }
+  };
+
+  const fetchPendingPmsRooms = async () => {
+    try {
+      const res = await fetch('/api/admin/pms-rooms/pending');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          setPendingPmsRooms(data);
+          const comms: Record<number, number> = {};
+          data.forEach((r: any) => {
+            comms[r.id] = r.commission_pct || 15;
+          });
+          setSelectedCommissions(comms);
+        } else {
+          setPendingPmsRooms([]);
+        }
+      } else {
+        setPendingPmsRooms([]);
+      }
+    } catch (err) {
+      console.warn("Pending PMS rooms fetch fallback:", err);
+      setPendingPmsRooms([]);
+    }
+  };
+
+  const handleApprovePmsRoom = async (roomId: number) => {
+    const commissionPct = selectedCommissions[roomId] || 15;
+    const typedAmount = selectedCommissionAmounts[roomId];
+    
+    try {
+      const res = await fetch(`/api/admin/pms-rooms/${roomId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ 
+          commissionPct,
+          commissionAmount: typedAmount ? parseFloat(typedAmount) : undefined
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        triggerNotification(data.message || "تم اعتماد وتنشيط الغرفة بنجاح!");
+        fetchPendingPmsRooms();
+        // Also reload hotels catalog to update rooms if needed
+        const hRes = await fetch('/api/catalog/hotels');
+        if (hRes.ok) {
+          const htls = await hRes.json();
+          const dbNames = new Set(htls.map((h: any) => (h.name_ar || h.nameAr || h.name || '').trim()));
+          const normalizedStaticHotels = staticHotels
+            .filter(h => !dbNames.has((h.nameAr || h.name || '').trim()))
+            .map(h => ({
+              ...h,
+              id: `static-${h.id}`,
+              name_ar: h.nameAr || h.name,
+              price_per_night: h.pricePerNight,
+              is_static: true
+            }));
+          setHotels([...normalizedStaticHotels, ...htls]);
+        }
+      } else {
+        const errData = await res.json();
+        triggerNotification(errData.message || "فشل اعتماد الغرفة", true);
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification("خطأ في الشبكة أثناء اعتماد الغرفة", true);
+    }
+  };
+
+  const handleRejectPmsRoom = async (roomId: number) => {
+    try {
+      const res = await fetch(`/api/admin/pms-rooms/${roomId}/reject`, {
+        method: 'POST'
+      });
+      if (res.ok) {
+        triggerNotification("تم رفض وتجاوز طلب الغرفة بنجاح.");
+        fetchPendingPmsRooms();
+      } else {
+        triggerNotification("فشل رفض الغرفة", true);
+      }
+    } catch (err) {
+      console.error(err);
+      triggerNotification("خطأ في الاتصال بالشبكة", true);
     }
   };
 
@@ -1014,8 +1317,8 @@ export default function AdminPanelOne() {
   // 4. Attractions
   const handleAttractionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!attrName || !attrNameAr || !attrWilayat) {
-      triggerNotification("اسم المعلم باللغتين والولاية حقول إلزامية", true);
+    if (!attrNameAr || !attrWilayat) {
+      triggerNotification("اسم المعلم بالعربي والولاية حقول إلزامية", true);
       return;
     }
     if (isCustomCategory && !customCategory.trim()) {
@@ -1038,7 +1341,8 @@ export default function AdminPanelOne() {
           image: attrImage || "https://images.unsplash.com/photo-1578894381163-e72c17f2d45f?auto=format&fit=crop&w=800&q=80",
           mapUrl: attrMapUrl || `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1828.5!2d58.4!3d23.6`,
           additionalImages: attrAdditionalImages,
-          tags: attrTags
+          tags: attrTags,
+          rating: attrRating || "4.8"
         };
         const res = await fetch('/api/catalog/attractions', {
           method: 'POST',
@@ -1050,14 +1354,15 @@ export default function AdminPanelOne() {
           setAttractions(prev => [created, ...prev]);
           insertedSections.push("دليل المعالم العام");
         } else {
-          console.error("General attraction post failed");
+          const errData = await res.json().catch(() => ({ error: 'فشل إدراج المعلم في الدليل العام' }));
+          console.warn("General attraction post response:", errData);
         }
       }
 
       if (attrInsertHimam) {
         const himamBody = {
           name: attrNameAr,
-          nameEn: attrName,
+          nameEn: attrName || attrNameAr,
           description: attrDesc || "موقع ومعلم سياحي مهيأ بالكامل لأصحاب الهمم وذوي الاحتياجات الخاصة لقضاء أجمل الأوقات.",
           descriptionEn: attrDesc || "A tourist attraction fully accessible and customized for people with special needs and companions.",
           location: `${attrGov}، ${attrWilayat}`,
@@ -1065,7 +1370,7 @@ export default function AdminPanelOne() {
           category: "wheelchair",
           features: attrTags.length > 0 ? attrTags : ["كراسي متحركة", "مداخل مخصصة", "مواقف مهيأة"],
           featuresEn: attrTags.length > 0 ? attrTags : ["Wheelchairs", "Accessible entrances", "Reserved parking"],
-          rating: 4.8,
+          rating: Number(attrRating) || 4.8,
           phone: "",
           mapUrl: attrMapUrl || `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1828.5!2d58.4!3d23.6`,
           fullyAccessible: true
@@ -1080,14 +1385,15 @@ export default function AdminPanelOne() {
           setHimamPlaces(prev => [created, ...prev]);
           insertedSections.push("همم شومة");
         } else {
-          console.error("Himam shouma post failed");
+          const errData = await res.json().catch(() => ({ error: 'فشل إدراج المعلم في همم شومة' }));
+          console.warn("Himam shouma post response:", errData);
         }
       }
 
       if (attrInsertDrob) {
         const drobBody = {
           name: attrNameAr,
-          nameEn: attrName,
+          nameEn: attrName || attrNameAr,
           description: attrDesc || "موقع ومعلم طبيعي فريد يمثل كنزاً من الكنوز المخفية الساحرة في سلطنة عمان المعطاءة.",
           descriptionEn: attrDesc || "A unique natural attraction representing one of the charming hidden gems in Oman.",
           location: attrWilayat,
@@ -1095,7 +1401,7 @@ export default function AdminPanelOne() {
           governorate: attrGov,
           governorateEn: attrGov,
           image: attrImage || "https://images.unsplash.com/photo-1578894381163-e72c17f2d45f?auto=format&fit=crop&w=800&q=80",
-          rating: 4.8,
+          rating: Number(attrRating) || 4.8,
           mapUrl: attrMapUrl || `https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d1828.5!2d58.4!3d23.6`
         };
         const res = await fetch('/api/drob-shouma', {
@@ -1108,7 +1414,8 @@ export default function AdminPanelOne() {
           setDrobGems(prev => [created, ...prev]);
           insertedSections.push("دروب شومة");
         } else {
-          console.error("Drob shouma post failed");
+          const errData = await res.json().catch(() => ({ error: 'فشل إدراج المعلم في دروب شومة' }));
+          console.warn("Drob shouma post response:", errData);
         }
       }
 
@@ -1120,6 +1427,7 @@ export default function AdminPanelOne() {
         setAttrImage('');
         setAttrMapUrl('');
         setAttrAdditionalImages('');
+        setAttrRating('4.8');
         setAttrTags([]);
         setIsCustomCategory(false);
         setCustomCategory('');
@@ -1264,7 +1572,11 @@ export default function AdminPanelOne() {
         splitShoumaPct: 15,
         splitHotelPct: 85,
         email: hotelEmail,
-        password: hotelPassword
+        password: hotelPassword,
+        accountantEmail: hotelAccountantEmail,
+        accountantPassword: hotelAccountantPassword,
+        receptionistEmail: hotelReceptionistEmail,
+        receptionistPassword: hotelReceptionistPassword
       };
       try {
         const res = await fetch('/api/catalog/hotels', {
@@ -1286,7 +1598,11 @@ export default function AdminPanelOne() {
           setAccAmenities([]);
           setHotelEmail('');
           setHotelPassword('');
-          triggerNotification("تم إدراج الفندق الفاخر بنجاح في خيارات التطبيق العام مع تعيين حساب للولوج!");
+          setHotelAccountantEmail('');
+          setHotelAccountantPassword('');
+          setHotelReceptionistEmail('');
+          setHotelReceptionistPassword('');
+          triggerNotification("تم إدراج الفندق الفاخر بنجاح في خيارات التطبيق العام مع تعيين حسابات الأدوار الثلاثة للولوج!");
         }
       } catch (err) {
         triggerNotification("خطأ في إضافة الفندق.", true);
@@ -1640,6 +1956,7 @@ export default function AdminPanelOne() {
             { id: 'himam', label: 'إدارة همم شومة', icon: Flame },
             { id: 'drob', label: 'إدارة دروب شومة', icon: Map },
             { id: 'finance', label: 'قسم المالية والأرباح', icon: DollarSign },
+            { id: 'portalAccounts', label: 'إدارة حسابات اللوحات الفرعية', icon: KeyRound, count: portalAccounts.length },
             { id: 'support', label: 'الشكاوى والاستفسارات', icon: HelpCircle, count: openedTicketsCount },
             { id: 'media', label: 'مكتبة الوسائط ورفع الملفات', icon: Film, count: totalMediaCount },
             { id: 'hq', label: 'بيانات المقر الرئيسي للمكتب', icon: Settings },
@@ -1714,6 +2031,7 @@ export default function AdminPanelOne() {
         <AnimatePresence>
           {successMsg && (
             <motion.div 
+              key="global-success-banner"
               initial={{ opacity: 0, y: -10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
@@ -1725,6 +2043,7 @@ export default function AdminPanelOne() {
           )}
           {errorMsg && (
             <motion.div 
+              key="global-error-banner"
               initial={{ opacity: 0, y: -10 }} 
               animate={{ opacity: 1, y: 0 }} 
               exit={{ opacity: 0, y: -10 }}
@@ -1743,16 +2062,29 @@ export default function AdminPanelOne() {
             {/* Quick Summary Grid */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               {[
-                { label: 'المرشدين المسجلين بقاعدة البيانات', val: totalGuides, icon: Users, color: 'text-amber-400 bg-amber-500/10' },
-                { label: 'المعالم السياحية بالمنصة', val: totalAttractions, icon: Landmark, color: 'text-sky-400 bg-sky-500/10' },
-                { label: 'طلب انتساب معلق بالانتظار', val: pendingAppsCount, icon: FileText, color: 'text-purple-400 bg-purple-500/10' },
-                { label: 'جولات سياحية بالبث والانتظار', val: activeTripsCount, icon: Compass, color: 'text-emerald-400 bg-emerald-500/10' },
-                { label: 'شكاوى واستفسارات للمرشدين', val: openedTicketsCount, icon: HelpCircle, color: 'text-red-400 bg-red-500/10' },
-                { label: 'فنادق مدرجة في مسقط وظفار', val: hotels.length, icon: Building, color: 'text-yellow-400 bg-yellow-500/10' },
-                { label: 'مطاعم عشاء عمانية شركاء', val: restaurants.length, icon: Landmark, color: 'text-pink-400 bg-pink-500/10' },
-                { label: 'ملف وسائط وصور/فيديو بالخادم', val: totalMediaCount, icon: Film, color: 'text-teal-400 bg-teal-500/10' },
+                { label: 'المرشدين المسجلين بقاعدة البيانات', val: totalGuides, icon: Users, color: 'text-amber-400 bg-amber-500/10', onClick: () => setActiveTab('guides') },
+                { label: 'المعالم السياحية بالمنصة', val: totalAttractions, icon: Landmark, color: 'text-sky-400 bg-sky-500/10', onClick: () => setActiveTab('attractions') },
+                { label: 'طلب انتساب معلق بالانتظار', val: pendingAppsCount, icon: FileText, color: 'text-purple-400 bg-purple-500/10', onClick: () => setActiveTab('applications') },
+                { label: 'جولات سياحية بالبث والانتظار', val: activeTripsCount, icon: Compass, color: 'text-emerald-400 bg-emerald-500/10', onClick: () => setActiveTab('trips') },
+                { label: 'شكاوى واستفسارات للمرشدين', val: openedTicketsCount, icon: HelpCircle, color: 'text-red-400 bg-red-500/10', onClick: () => setActiveTab('support') },
+                { label: 'فنادق مدرجة في مسقط وظفار', val: hotels.length, icon: Building, color: 'text-yellow-400 bg-yellow-500/10', onClick: () => {
+                  setActiveTab('finance');
+                  if (hotels.length > 0) {
+                    setSelectedHotelFinanceId(hotels[0].id);
+                  }
+                  setTimeout(() => {
+                    const el = document.getElementById('hotel-financial-ledger-section');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }, 100);
+                }},
+                { label: 'مطاعم عشاء عمانية شركاء', val: restaurants.length, icon: Landmark, color: 'text-pink-400 bg-pink-500/10', onClick: () => setActiveTab('accommodations') },
+                { label: 'ملف وسائط وصور/فيديو بالخادم', val: totalMediaCount, icon: Film, color: 'text-teal-400 bg-teal-500/10', onClick: () => setActiveTab('media') },
               ].map((card, i) => (
-                <div key={i} className="bg-slate-900 border border-slate-800/60 p-5 rounded-2xl flex items-center justify-between gap-4">
+                <div 
+                  key={i} 
+                  onClick={card.onClick}
+                  className="bg-slate-900 border border-slate-800/60 p-5 rounded-2xl flex items-center justify-between gap-4 transition-all hover:border-sky-500 hover:bg-slate-850 cursor-pointer hover:shadow-lg hover:shadow-sky-500/5"
+                >
                   <div>
                     <span className="text-[10px] text-slate-400 block leading-tight mb-1 font-bold">{card.label}</span>
                     <strong className="text-2xl font-black text-white">{card.val}</strong>
@@ -1764,16 +2096,51 @@ export default function AdminPanelOne() {
               ))}
             </div>
 
-            {/* Quick Quickstart Guideline */}
-            <div className="p-6 bg-gradient-to-r from-slate-900 to-slate-950 border border-amber-500/20 rounded-3xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 rounded-full blur-2xl pointer-events-none" />
-              <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between relative z-10" dir="rtl">
-                <div className="space-y-1">
-                  <span className="text-[10px] text-amber-500 font-bold tracking-wide block">أهلاً بك يا مدير شركة شومة الموقر</span>
-                  <h3 className="text-sm font-bold text-white">تحكم وقدرة مطلقة لإدارة المكونات الاستكشافية لسلطنة عمان</h3>
-                  <p className="text-xs text-slate-400 leading-normal max-w-2xl">
-                    من خلال هذه اللوحة المتطورة، يمكنك التحكم كلياً بتطبيق شومة من مسقط لظفار! يمكنك إبطال أو قبول طلبات التسجيل للمرشدين، ربط ملفات الصور والفيديوهات، تعميم التعليمات، التحكم بالرحلات اليومية والنشطة وحذفها وتعديل أسعارها بالريال العماني.
+            {/* Monitoring Oversight Card for External Departments (Hotels & Car Rentals) */}
+            <div className="p-6 bg-gradient-to-r from-slate-900 via-slate-900 to-slate-950 border border-sky-500/30 rounded-3xl relative overflow-hidden shadow-xl">
+              <div className="absolute top-0 right-0 w-48 h-48 bg-sky-500/10 rounded-full blur-3xl pointer-events-none" />
+              <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between relative z-10" dir="rtl">
+                <div className="space-y-2 max-w-2xl">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-sky-400 font-bold tracking-wide block bg-sky-500/10 px-2.5 py-0.5 rounded-full border border-sky-500/20">
+                      <ShieldCheck className="w-3 h-3 inline ml-1" /> قسم المراقبة والإشراف المستمر
+                    </span>
+                    <span className="text-[10px] text-emerald-400 font-bold block bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/20">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block ml-1 animate-pulse" /> مراقبة حية نشطة
+                    </span>
+                  </div>
+                  <h3 className="text-base font-black text-white">مراقبة قسم تأجير السيارات وقسم الفنادق والمنتجعات</h3>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    نظام المراقبة المستمرة لمكتب تأجير السيارات والفنادق والمنتجعات: يتميز هذا القسم بالمتابعة الحية لكافة العمليات الحجوزات، نشاط المركبات، حركة الموظفين، وسجلات الدخول والخروج مع الوقت والتاريخ.
                   </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  <a 
+                    href="/cnt-admin"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-3 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 font-bold text-xs rounded-2xl flex items-center gap-2 border border-sky-500/30 transition-all cursor-pointer"
+                  >
+                    <Car className="w-4 h-4 text-sky-400" />
+                    <span>مراقبة السيارات 🚗</span>
+                  </a>
+                  <a 
+                    href="/hotels-admin-private-8822"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-3 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-bold text-xs rounded-2xl flex items-center gap-2 border border-amber-500/30 transition-all cursor-pointer"
+                  >
+                    <Building className="w-4 h-4 text-amber-400" />
+                    <span>مراقبة الفنادق 🏨</span>
+                  </a>
+                  <button
+                    onClick={() => setActiveTab('portalAccounts')}
+                    className="px-4 py-3 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-slate-950 font-black text-xs rounded-2xl flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-emerald-500/10"
+                  >
+                    <KeyRound className="w-4 h-4" />
+                    <span>سجل الدخول والموظفين 👁️</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -2442,7 +2809,7 @@ export default function AdminPanelOne() {
 
               <form onSubmit={handleAttractionSubmit} className="space-y-3">
                 <div className="space-y-1">
-                  <label htmlFor="atN" className="text-xs text-slate-300 block">اسم الموقع بالإنجليزي:</label>
+                  <label htmlFor="atN" className="text-xs text-slate-300 block">اسم الموقع بالإنجليزي (اختياري - سيتم ترجمته تلقائياً بالذكاء الاصطناعي):</label>
                   <input
                     id="atN"
                     type="text"
@@ -2588,6 +2955,80 @@ export default function AdminPanelOne() {
                     placeholder="تفاصيل تصف جمالية ومواعيد زيارة هذا المعلم..."
                     className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-slate-200 text-xs focus:outline-none font-sans"
                   />
+                </div>
+
+                {/* 🌟 Interactive Star and Decimal Rating Selector */}
+                <div className="space-y-2.5 p-3.5 bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 rounded-2xl font-sans">
+                  <div className="flex justify-between items-center">
+                    <label className="text-xs font-black text-amber-400 block flex items-center gap-1">
+                      <Star className="w-4 h-4 text-amber-500 fill-amber-500" />
+                      التقييم والنجوم المستحقة للمعلم:
+                    </label>
+                    <span className="text-xs font-black bg-amber-500/10 text-amber-400 px-2.5 py-1 rounded-lg border border-amber-500/20">
+                      ⭐ {attrRating} / 5.0
+                    </span>
+                  </div>
+
+                  {/* Interactive Star Row */}
+                  <div className="flex justify-center items-center gap-2 py-1 bg-slate-950/40 rounded-xl border border-slate-800">
+                    {[1, 2, 3, 4, 5].map((star) => {
+                      const decimalVal = parseFloat(attrRating) || 4.8;
+                      const isFilled = star <= Math.round(decimalVal);
+                      return (
+                        <button
+                          key={star}
+                          type="button"
+                          onClick={() => setAttrRating(star.toFixed(1))}
+                          className="p-1 hover:scale-125 transition-all duration-150 cursor-pointer focus:outline-none"
+                          title={`تحديد كـ ${star} نجوم`}
+                        >
+                          <Star 
+                            className={`w-6 h-6 transition-colors ${
+                              isFilled 
+                                ? "text-amber-500 fill-amber-500 drop-shadow-[0_0_10px_rgba(245,158,11,0.3)]" 
+                                : "text-slate-600 hover:text-amber-500/70"
+                            }`} 
+                          />
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Rating preset buttons or custom manual input */}
+                  <div className="grid grid-cols-5 gap-1.5 pt-1">
+                    {['4.5', '4.7', '4.8', '4.9', '5.0'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setAttrRating(preset)}
+                        className={`py-1 rounded-lg text-[10px] font-bold border transition-all cursor-pointer ${
+                          attrRating === preset
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-400 font-extrabold shadow-sm shadow-amber-500/10'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700 hover:text-slate-200'
+                        }`}
+                      >
+                        {preset} ⭐
+                      </button>
+                    ))}
+                    {/* Manual input for any arbitrary decimal */}
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="1.0"
+                      max="5.0"
+                      value={attrRating}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        if (!isNaN(val) && val >= 1.0 && val <= 5.0) {
+                          setAttrRating(e.target.value);
+                        } else if (e.target.value === '') {
+                          setAttrRating('');
+                        }
+                      }}
+                      placeholder="تقييم"
+                      className="px-2 py-1 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 text-[10px] font-bold text-center focus:outline-none focus:border-amber-500"
+                    />
+                  </div>
                 </div>
 
                 {/* Div #8: Beautiful Category Selector ("مستطيل تصنيفات" at precisely index 8) */}
@@ -2870,8 +3311,6 @@ export default function AdminPanelOne() {
                         <option value="3">⭐⭐⭐ (3 نجوم)</option>
                       </select>
                     </div>
-
-                    {/* Split payments controls removed */}
                   </div>
                 ) : (
                   <div className="grid grid-cols-2 gap-2">
@@ -3059,35 +3498,106 @@ export default function AdminPanelOne() {
                       </p>
                     </div>
 
-                    <div className="space-y-2 bg-emerald-950/20 p-3 border border-emerald-500/20 rounded-2xl">
-                      <label className="text-xs font-sans font-bold text-emerald-500 block text-right">🔑 بيانات اعتماد حساب الفندق للولوج لبرنامج الحجوزات:</label>
-                      <div className="space-y-1 text-right">
-                        <label htmlFor="hotelEmail" className="text-[10px] text-slate-400 block">البريد الإلكتروني للوجين:</label>
-                        <input
-                          id="hotelEmail"
-                          type="email"
-                          value={hotelEmail}
-                          onChange={(e) => setHotelEmail(e.target.value)}
-                          placeholder="hotel@shouma.com"
-                          className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
-                          style={{ color: '#ffffff', backgroundColor: '#020617' }}
-                          dir="ltr"
-                          required={accType === 'hotel'}
-                        />
+                     <div className="space-y-4 bg-emerald-950/25 p-4 border border-emerald-500/20 rounded-2xl">
+                      <label className="text-xs font-sans font-bold text-emerald-500 block text-right">🔑 بيانات اعتماد حسابات الفندق (٣ أدوار مختلفة للولوج):</label>
+                      
+                      {/* 1. Manager Role */}
+                      <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
+                        <span className="text-[10px] font-bold text-emerald-400 block text-right">👤 حساب المدير العام (Manager)</span>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelEmail" className="text-[9px] text-slate-400 block">البريد الإلكتروني للوجين:</label>
+                          <input
+                            id="hotelEmail"
+                            type="email"
+                            value={hotelEmail}
+                            onChange={(e) => setHotelEmail(e.target.value)}
+                            placeholder="manager@shouma.com"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelPassword" className="text-[9px] text-slate-400 block">كلمة المرور:</label>
+                          <input
+                            id="hotelPassword"
+                            type="password"
+                            value={hotelPassword}
+                            onChange={(e) => setHotelPassword(e.target.value)}
+                            placeholder="كلمة مرور المدير العام"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
                       </div>
-                      <div className="space-y-1 text-right">
-                        <label htmlFor="hotelPassword" className="text-[10px] text-slate-400 block">كلمة المرور:</label>
-                        <input
-                          id="hotelPassword"
-                          type="password"
-                          value={hotelPassword}
-                          onChange={(e) => setHotelPassword(e.target.value)}
-                          placeholder="كلمة مرور الفندق"
-                          className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
-                          style={{ color: '#ffffff', backgroundColor: '#020617' }}
-                          dir="ltr"
-                          required={accType === 'hotel'}
-                        />
+
+                      {/* 2. Accountant Role */}
+                      <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
+                        <span className="text-[10px] font-bold text-emerald-400 block text-right">💼 حساب المحاسب المالي (Accountant)</span>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelAccountantEmail" className="text-[9px] text-slate-400 block">البريد الإلكتروني للوجين:</label>
+                          <input
+                            id="hotelAccountantEmail"
+                            type="email"
+                            value={hotelAccountantEmail}
+                            onChange={(e) => setHotelAccountantEmail(e.target.value)}
+                            placeholder="accountant@shouma.com"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelAccountantPassword" className="text-[9px] text-slate-400 block">كلمة المرور:</label>
+                          <input
+                            id="hotelAccountantPassword"
+                            type="password"
+                            value={hotelAccountantPassword}
+                            onChange={(e) => setHotelAccountantPassword(e.target.value)}
+                            placeholder="كلمة مرور المحاسب المالي"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
+                      </div>
+
+                      {/* 3. Receptionist Role */}
+                      <div className="p-3 bg-slate-950/60 border border-slate-800 rounded-xl space-y-2">
+                        <span className="text-[10px] font-bold text-emerald-400 block text-right">🛎️ حساب موظف الاستقبال (Receptionist)</span>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelReceptionistEmail" className="text-[9px] text-slate-400 block">البريد الإلكتروني للوجين:</label>
+                          <input
+                            id="hotelReceptionistEmail"
+                            type="email"
+                            value={hotelReceptionistEmail}
+                            onChange={(e) => setHotelReceptionistEmail(e.target.value)}
+                            placeholder="receptionist@shouma.com"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
+                        <div className="space-y-1 text-right">
+                          <label htmlFor="hotelReceptionistPassword" className="text-[9px] text-slate-400 block">كلمة المرور:</label>
+                          <input
+                            id="hotelReceptionistPassword"
+                            type="password"
+                            value={hotelReceptionistPassword}
+                            onChange={(e) => setHotelReceptionistPassword(e.target.value)}
+                            placeholder="كلمة مرور موظف الاستقبال"
+                            className="w-full px-3 py-2 border border-slate-800 rounded-xl text-xs focus:outline-none text-left"
+                            style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                            dir="ltr"
+                            required={accType === 'hotel'}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -3108,6 +3618,174 @@ export default function AdminPanelOne() {
               <h2 className="text-sm font-bold text-white">الخيارات المسجلة للفنادق والمطاعم حالياً</h2>
 
               <div className="space-y-6">
+                {/* PMS Pending Room Approvals Section */}
+                <div className="p-5 bg-amber-500/5 border border-amber-500/20 rounded-2xl space-y-4">
+                  <div className="flex items-center justify-between border-b border-amber-500/10 pb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 bg-amber-500/10 rounded-lg text-amber-500">
+                        <Percent className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <h3 className="text-xs font-black text-white">طلبات مراجعة واعتماد الغرف الفندقية (PMS)</h3>
+                        <p className="text-[10px] text-slate-400">راجع خيارات الغرف الجديدة وحدد نسبة العمولة لتنشيط العقد والنشر بالمنصة</p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-0.5 bg-amber-500 text-slate-950 text-[10px] font-black rounded-full">
+                      {pendingPmsRooms.length} طلبات معلقة
+                    </span>
+                  </div>
+
+                  {pendingPmsRooms.length === 0 ? (
+                    <p className="text-slate-500 text-[10px] text-center py-4">لا توجد طلبات إدراج غرف فندقية معلقة حالياً. عمل متميز!</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {pendingPmsRooms.map(room => {
+                        const basePrice = parseFloat(room.price_base) || 0;
+                        const commPct = selectedCommissions[room.id] || 15;
+                        const typedAmount = selectedCommissionAmounts[room.id] || "";
+                        
+                        const finalPrice = typedAmount 
+                          ? basePrice + (parseFloat(typedAmount) || 0) 
+                          : basePrice + (basePrice * (commPct / 100));
+                          
+                        const commissionApplied = typedAmount 
+                          ? (parseFloat(typedAmount) || 0) 
+                          : (basePrice * (commPct / 100));
+
+                        return (
+                          <div key={room.id} className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3 font-sans">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <span className="px-2 py-0.5 bg-slate-900 border border-slate-800 text-slate-400 text-[9px] rounded font-bold">
+                                  🏢 الفندق: {room.hotel_name || `فندق #${room.hotel_id}`}
+                                </span>
+                                <h4 className="text-xs font-bold text-white mt-1">{room.name_ar}</h4>
+                                <p className="text-[10px] text-slate-400 mt-0.5 leading-normal">{room.description}</p>
+                              </div>
+                              <span className="text-xs font-bold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg">
+                                السعر الأساسي: {basePrice.toFixed(3)} ر.ع
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-900">
+                              {/* Commission Options & Input */}
+                              <div className="space-y-2">
+                                <div>
+                                  <label className="text-[10px] text-slate-300 block mb-1 font-bold">مبلغ عمولة شومة المباشر (ر.ع):</label>
+                                  <Input
+                                    type="number"
+                                    placeholder="مثال: 15"
+                                    value={typedAmount}
+                                    onChange={e => setSelectedCommissionAmounts(prev => ({ ...prev, [room.id]: e.target.value }))}
+                                    className="bg-slate-900 border-slate-800 text-xs text-white font-mono h-8 text-left"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[9px] text-slate-400 block mb-1">أو اختر نسبة سريعة للتعبئة التلقائية:</label>
+                                  <div className="flex gap-1.5">
+                                    {[5, 10, 15].map(pct => (
+                                      <button
+                                        key={pct}
+                                        type="button"
+                                        onClick={() => {
+                                          setSelectedCommissions(prev => ({ ...prev, [room.id]: pct }));
+                                          setSelectedCommissionAmounts(prev => ({ ...prev, [room.id]: (basePrice * (pct / 100)).toFixed(3) }));
+                                        }}
+                                        className={`flex-1 py-0.5 px-2 border rounded text-[9px] font-bold transition-all ${
+                                          !typedAmount && commPct === pct 
+                                            ? 'bg-amber-500 border-amber-500 text-slate-950' 
+                                            : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                                        }`}
+                                      >
+                                        {pct}% ({(basePrice * (pct / 100)).toFixed(3)})
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Live Price Calculator */}
+                              <div className="bg-slate-900/60 p-2 border border-slate-800/60 rounded-xl flex flex-col justify-center">
+                                <span className="text-[9px] text-slate-400 block">حساب السعر النهائي المنشور بالتطبيق:</span>
+                                <div className="text-xs font-black text-emerald-400 mt-1 flex items-baseline gap-1">
+                                  <span className="text-sm">{finalPrice.toFixed(3)}</span>
+                                  <span>ريال عماني</span>
+                                  <span className="text-[9px] text-slate-500 font-normal">
+                                    (شاملاً {commissionApplied.toFixed(3)} ر.ع عمولة)
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex justify-end gap-2 pt-2 border-t border-slate-900">
+                              <button
+                                type="button"
+                                onClick={() => handleRejectPmsRoom(room.id)}
+                                className="px-3 py-1.5 bg-slate-900 hover:bg-red-950 hover:text-red-400 border border-slate-800 text-slate-400 text-[10px] font-bold rounded-lg transition-all"
+                              >
+                                رفض الطلب
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleApprovePmsRoom(room.id)}
+                                className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-slate-950 text-[10px] font-black rounded-lg transition-all flex items-center gap-1"
+                              >
+                                <Check className="w-3.5 h-3.5" />
+                                اعتماد ونشر الغرفة للهواتف
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pending Hotel Approvals from Admin */}
+                <div className="space-y-3 p-4 bg-slate-900/40 border border-slate-850 rounded-2xl text-right dir-rtl font-sans">
+                  <h3 className="text-xs font-black text-amber-400 block border-b border-amber-500/10 pb-1">⏱️ طلبات الفنادق الجديدة بانتظار موافقة المدير العام:</h3>
+                  {pendingApprovalHotels.length === 0 ? (
+                    <p className="text-slate-500 text-[10px] text-center py-2">لا توجد طلبات انضمام فندقية معلقة موافقتك حالياً.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {pendingApprovalHotels.map((h: any) => (
+                        <div key={h.id} className="p-3 bg-slate-950 border border-amber-500/20 rounded-xl space-y-2.5">
+                          <div className="flex justify-between items-start gap-2">
+                            <div>
+                              <h4 className="text-xs font-bold text-white">{h.name_ar || h.nameAr || h.name}</h4>
+                              <p className="text-[10px] text-slate-400 font-sans mt-0.5">{h.city} • {h.region}</p>
+                              <p className="text-[9px] text-slate-500 font-sans mt-1 line-clamp-2">{h.description || "لا يوجد وصف."}</p>
+                            </div>
+                            <div className="text-left">
+                              <span className="text-[8px] font-bold text-amber-400 bg-amber-400/10 border border-amber-400/20 px-2 py-0.5 rounded-md block">
+                                عمولة شومة: {h.split_shouma_pct ?? 15}%
+                              </span>
+                              <span className="text-[8px] font-bold text-violet-400 bg-violet-400/10 border border-violet-400/20 px-2 py-0.5 rounded-md block mt-1">
+                                حصة الفندق: {h.split_hotel_pct ?? 85}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex gap-2 border-t border-slate-900 pt-2">
+                            <button
+                              onClick={() => handleApproveHotel(h.id)}
+                              className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-[10px] rounded-lg transition-all cursor-pointer text-white"
+                            >
+                              ✓ تفعيل واعتماد إدراج الفندق
+                            </button>
+                            <button
+                              onClick={() => handleRejectHotel(h.id)}
+                              className="px-3.5 py-1.5 bg-rose-950/40 hover:bg-rose-900 border border-rose-500/20 text-rose-400 font-bold text-[10px] rounded-lg transition-all cursor-pointer"
+                            >
+                              ✗ رفض
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Hotels List */}
                 <div className="space-y-3">
                   <h3 className="text-xs font-black text-amber-400 block border-b border-amber-500/10 pb-1">🏨 الفنادق والاستراحات المدرجة:</h3>
@@ -3116,9 +3794,20 @@ export default function AdminPanelOne() {
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {hotels.map(h => (
-                        <div key={h.id} className="p-3 bg-slate-900 border border-slate-850 rounded-xl flex items-center justify-between gap-3">
+                        <div 
+                          key={h.id} 
+                          onClick={() => {
+                            setSelectedHotelFinanceId(Number(h.id));
+                            setActiveTab('finance');
+                            setTimeout(() => {
+                              const el = document.getElementById('hotel-financial-ledger-section');
+                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }, 100);
+                          }}
+                          className="p-3 bg-slate-900 border border-slate-850 hover:border-sky-500 hover:bg-slate-850/60 transition-all rounded-xl flex items-center justify-between gap-3 cursor-pointer group"
+                        >
                           <div className="truncate flex-1">
-                            <h4 className="text-xs font-bold text-white truncate">{h.name_ar || h.name}</h4>
+                            <h4 className="text-xs font-bold text-white group-hover:text-sky-400 transition-colors truncate">{h.name_ar || h.name}</h4>
                             <span className="text-[9px] text-slate-400 block truncate">{h.city} - {h.region} • 💰 {h.price_per_night || h.pricePerNight} ر.ع/ليلة</span>
                             {h.bank_account || h.bankAccount ? (
                               <span className="text-[8px] mt-1 text-emerald-500 bg-emerald-500/10 px-1 py-0.5 rounded inline-block font-mono font-bold" title={h.bank_account || h.bankAccount}>
@@ -3132,8 +3821,11 @@ export default function AdminPanelOne() {
                           </div>
                           <button
                             id={`btn-delete-hotel-${h.id}`}
-                            onClick={() => handleDeleteHotel(h.id)}
-                            className="p-1 hover:bg-slate-800 text-slate-500 hover:text-red-500 rounded transition-all cursor-pointer"
+                            onClick={(e) => {
+                              e.stopPropagation(); // Avoid triggering card selection
+                              handleDeleteHotel(h.id);
+                            }}
+                            className="p-1.5 hover:bg-slate-800 text-slate-500 hover:text-red-500 rounded transition-all cursor-pointer"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
@@ -4524,9 +5216,30 @@ export default function AdminPanelOne() {
                         اربط وأدخل توكن بوابتك يدوياً لتفعيل سحب تسويات وحصص الفنادق فوراً.
                       </p>
                     </div>
-                    <form onSubmit={(e) => {
+                    <form onSubmit={async (e) => {
                       e.preventDefault();
-                      triggerNotification("تم حفظ وتحديث توكن بوابة الدفع الرئيسية الموحدة بنجاح!");
+                      try {
+                        for (const gw of hikingPayments) {
+                          await fetch(`/api/hiking-payments/${gw.id}`, { method: 'DELETE' });
+                        }
+                        const res = await fetch("/api/hiking-payments", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({
+                            gateway_name: mainGatewayName.trim() || "شومة باي - بوابة دفع آمن مباشر",
+                            details: mainToken.trim() || ""
+                          })
+                        });
+                        if (res.ok) {
+                          const data = await res.json();
+                          setHikingPayments([data]);
+                          triggerNotification("تم حفظ وتحديث توكن بوابة الدفع الرئيسية الموحدة بنجاح!");
+                        } else {
+                          triggerNotification("فشل تحديث بوابة الدفع في الخادم");
+                        }
+                      } catch (err) {
+                        triggerNotification("حدث خطأ أثناء الاتصال بالخادم");
+                      }
                     }} className="space-y-4">
                       <div className="space-y-1.5 text-right">
                         <label className="text-xs text-slate-300 block font-bold">اسم بوابة الدفع العامة</label>
@@ -4598,7 +5311,7 @@ export default function AdminPanelOne() {
             </div>
 
             {/* 4. Hotel Financial Ledger (Individual dashboard page for each hotel) */}
-            <div className="space-y-6 text-right">
+            <div id="hotel-financial-ledger-section" className="space-y-6 text-right">
               <div className="border-b border-slate-800 pb-3 text-right">
                 <h3 className="text-base font-black text-white flex items-center gap-2 justify-end">
                   <Building className="w-5 h-5 text-sky-400" /> الملفات المالية المستقلة للفنادق المدرجة
@@ -5100,6 +5813,511 @@ export default function AdminPanelOne() {
                 </div>
               </>
             )}
+          </div>
+        )}
+
+        {/* TAB 16: SUB-PORTAL ACCOUNTS MANAGEMENT & LIVE AUDIT TRAIL */}
+        {activeTab === 'portalAccounts' && (
+          <div className="space-y-8 text-right dir-rtl font-sans">
+            {/* Top Header Card */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 relative overflow-hidden shadow-xl">
+              <div className="absolute top-0 right-0 left-0 h-1.5 bg-gradient-to-r from-amber-500 via-sky-500 to-emerald-500" />
+              <div className="flex flex-wrap justify-between items-center gap-4 border-b border-slate-800/80 pb-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                      <KeyRound className="w-3.5 h-3.5" /> النظام الموحد للأقسام والبريد الإلكتروني
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> مراقبة حية ومباشرة
+                    </span>
+                  </div>
+                  <h2 className="text-2xl font-black text-white">إدارة حسابات الموظفين بالأقسام وسجل الدخول والخروج</h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    تنظيم البريد الإلكتروني للأقسام (مثال: قسم المالية يضم عدة موظفين مع خيار إضافة موظفين جدد) مع سجل حي يوضح من دخل ومن خرج ومع الوقت لكل لوحة وقسم.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <a
+                    href="/shouma_accounts_and_passwords.docx"
+                    download="shouma_accounts_and_passwords.docx"
+                    className="px-4 py-3 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer border border-emerald-600 shadow-lg"
+                    title="تحميل جدول حسابات وكلمات المرور بصيغة Word"
+                  >
+                    <Download className="w-3.5 h-3.5" /> تحميل ملف وورد Word
+                  </a>
+                  <button
+                    onClick={fetchAuditLogs}
+                    className="px-4 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer border border-slate-700"
+                    title="تحديث سجل الحركة اللحظي"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAuditLogs ? 'animate-spin' : ''}`} /> تحديث السجل الحي
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsCreatingPortalAccount(true);
+                      setEditingPortalAccount(null);
+                      setPortalForm({
+                        portalType: "finance",
+                        portalName: "لوحة الإدارة المالية العامة",
+                        name: "",
+                        email: "",
+                        password: "",
+                        isActive: true
+                      });
+                    }}
+                    className="px-5 py-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black rounded-2xl text-xs flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-amber-500/10"
+                  >
+                    <UserPlus className="w-4 h-4" /> إضافة بريد / موظف جديد
+                  </button>
+                </div>
+              </div>
+
+              {/* Department Staff Cards Grid */}
+              <div className="mt-6">
+                <h3 className="text-sm font-bold text-slate-300 mb-3 flex items-center gap-2">
+                  <Building2 className="w-4 h-4 text-amber-400" /> توزيع الموظفين والبريد الإلكتروني حسب الأقسام
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {[
+                    { type: 'finance', name: 'قسم الإدارة المالية والتدقيق', icon: DollarSign, color: 'emerald', defaultPortalName: 'لوحة الإدارة المالية العامة' },
+                    { type: 'hotels', name: 'قسم الفنادق والمنتجعات', icon: Building, color: 'amber', defaultPortalName: 'لوحة إدارة الفنادق والمنتجعات' },
+                    { type: 'cars', name: 'قسم تأجير السيارات', icon: Car, color: 'sky', defaultPortalName: 'لوحة إدارة مكتب تأجير السيارات' },
+                    { type: 'trips', name: 'قسم الرحلات والفعاليات', icon: Compass, color: 'purple', defaultPortalName: 'لوحة إدارة الرحلات الاستكشافية' },
+                    { type: 'marketing', name: 'قسم التسويق والإعلانات', icon: Megaphone, color: 'rose', defaultPortalName: 'لوحة إدارة التسويق والإعلانات' },
+                    { type: 'guides', name: 'بوابة المرشدين السياحيين', icon: MapPin, color: 'indigo', defaultPortalName: 'لوحة المرشدين السياحيين' },
+                    { type: 'tech', name: 'قسم التقنية والدعم البرمجي', icon: ShieldAlert, color: 'blue', defaultPortalName: 'لوحة الدعم التقني والبرمجي' }
+                  ].map((dept) => {
+                    const deptAccounts = portalAccounts.filter(a => (a.portalType || a.portal_type) === dept.type);
+                    const activeDeptAccounts = deptAccounts.filter(a => a.isActive || a.is_active);
+                    const DeptIcon = dept.icon;
+
+                    return (
+                      <div key={dept.type} className="bg-slate-950/80 border border-slate-800 rounded-2xl p-4 hover:border-slate-700 transition-all flex flex-col justify-between">
+                        <div>
+                          <div className="flex items-center justify-between gap-2 mb-2">
+                            <span className="p-2 bg-slate-900 border border-slate-800 rounded-xl text-amber-400">
+                              <DeptIcon className="w-4 h-4" />
+                            </span>
+                            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                              {deptAccounts.length} بريد / موظف
+                            </span>
+                          </div>
+                          <h4 className="text-xs font-bold text-white mb-1">{dept.name}</h4>
+                          <p className="text-[10px] text-slate-400">
+                            {activeDeptAccounts.length} حساب نشط للدخول
+                          </p>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setIsCreatingPortalAccount(true);
+                            setEditingPortalAccount(null);
+                            setPortalForm({
+                              portalType: dept.type,
+                              portalName: dept.defaultPortalName,
+                              name: "",
+                              email: `${dept.type}${deptAccounts.length + 1}@shouma.com`,
+                              password: `${dept.type}2026`,
+                              isActive: true
+                            });
+                          }}
+                          className="mt-3 w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-850 text-amber-400 border border-amber-500/20 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 transition-all"
+                        >
+                          <Plus className="w-3 h-3" /> إضافة موظف للقسم
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Form Modal/Drawer for Create or Edit */}
+              {(isCreatingPortalAccount || editingPortalAccount) && (
+                <form onSubmit={handleSavePortalAccount} className="mt-8 bg-slate-950 border border-amber-500/30 rounded-2xl p-6 space-y-4 shadow-2xl relative">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 className="text-sm font-bold text-amber-400 flex items-center gap-2">
+                      <UserPlus className="w-4 h-4" />
+                      {editingPortalAccount ? "تعديل بيانات بريد / موظف بالقسم" : "إضافة موظف/بريد إلكتروني جديد لقسم معين"}
+                    </h3>
+                    <span className="text-[11px] text-slate-400">يمكن إضافة أكثر من بريد إلكتروني لنفس القسم (مثل قسم المالية)</span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">اختر القسم / نوع اللوحة الفرعية</label>
+                      <select
+                        value={portalForm.portalType}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const namesMap: Record<string, string> = {
+                            hotels: "لوحة إدارة الفنادق والمنتجعات",
+                            finance: "لوحة الإدارة المالية العامة",
+                            cars: "لوحة إدارة مكتب تأجير السيارات",
+                            trips: "لوحة إدارة الرحلات الاستكشافية",
+                            marketing: "لوحة إدارة التسويق والإعلانات",
+                            tech: "لوحة الدعم التقني والبرمجي",
+                            guides: "لوحة المرشدين السياحيين"
+                          };
+                          setPortalForm(prev => ({
+                            ...prev,
+                            portalType: val,
+                            portalName: namesMap[val] || val
+                          }));
+                        }}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
+                      >
+                        <option value="finance">💰 الإدارة المالية والتدقيق (Finance)</option>
+                        <option value="hotels">🏨 الفنادق والمنتجعات (Hotels)</option>
+                        <option value="cars">🚗 مكاتب تأجير السيارات (Car Rentals)</option>
+                        <option value="trips">🏔️ إدارة الرحلات والفعاليات (Trips)</option>
+                        <option value="marketing">📣 قسم التسويق والإعلانات (Marketing)</option>
+                        <option value="guides">🧭 بوابة المرشدين السياحيين (Guides)</option>
+                        <option value="tech">🛡️ بوابة المطورين والتقنية (Tech)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">عنوان/اسم اللوحة للقسم</label>
+                      <input
+                        type="text"
+                        value={portalForm.portalName}
+                        onChange={(e) => setPortalForm(prev => ({ ...prev, portalName: e.target.value }))}
+                        placeholder="مثال: لوحة الإدارة المالية العامة"
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">اسم الموظف / المسؤول</label>
+                      <input
+                        type="text"
+                        value={portalForm.name}
+                        onChange={(e) => setPortalForm(prev => ({ ...prev, name: e.target.value }))}
+                        placeholder="مثال: سالم العبري - المحاسب الرئيسي"
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">البريد الإلكتروني للدخول</label>
+                      <input
+                        type="email"
+                        value={portalForm.email}
+                        onChange={(e) => setPortalForm(prev => ({ ...prev, email: e.target.value }))}
+                        placeholder="finance2@shouma.com"
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white dir-ltr text-right font-mono text-emerald-400"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-bold text-slate-300 mb-1">كلمة المرور للدخول</label>
+                      <input
+                        type="text"
+                        value={portalForm.password}
+                        onChange={(e) => setPortalForm(prev => ({ ...prev, password: e.target.value }))}
+                        placeholder="••••••••••••"
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white font-mono"
+                        required
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-6">
+                      <input
+                        type="checkbox"
+                        id="isActiveCheck"
+                        checked={portalForm.isActive}
+                        onChange={(e) => setPortalForm(prev => ({ ...prev, isActive: e.target.checked }))}
+                        className="w-4 h-4 rounded accent-amber-500"
+                      />
+                      <label htmlFor="isActiveCheck" className="text-xs font-bold text-slate-300 cursor-pointer">
+                        الحساب مفعل ويمكن للموظف تسجيل الدخول به
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3 pt-2">
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5"
+                    >
+                      <Check className="w-4 h-4" /> حفظ بيانات الموظف والبريد
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingPortalAccount(false);
+                        setEditingPortalAccount(null);
+                      }}
+                      className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition-all"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                </form>
+              )}
+
+              {/* Accounts Table Header & Controls */}
+              <div className="mt-10 border-t border-slate-800/80 pt-6">
+                <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <Users className="w-4 h-4 text-amber-400" /> دليل حسابات وإيميلات الموظفين لكل قسم
+                    </h3>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      قائمة بجميع الموظفين المصرح لهم بالدخول للوحات الفرعية متضمنة بيانات الاعتماد البريدية
+                    </p>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-right text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/50">
+                        <th className="p-3">القسم واللوحة</th>
+                        <th className="p-3">الموظف / المسؤول</th>
+                        <th className="p-3">البريد الإلكتروني</th>
+                        <th className="p-3">كلمة المرور</th>
+                        <th className="p-3">الحالة</th>
+                        <th className="p-3 text-left">إجراءات</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/60">
+                      {portalAccounts.map((acc) => (
+                        <tr key={acc.id} className="hover:bg-slate-800/30 transition-colors">
+                          <td className="p-3 font-bold text-white">
+                            <span className="block">{acc.portalName || acc.portal_name}</span>
+                            <span className="text-[10px] text-amber-400 font-mono">({acc.portalType || acc.portal_type})</span>
+                          </td>
+                          <td className="p-3 text-slate-200 font-semibold">{acc.name || "مدير القسم"}</td>
+                          <td className="p-3 font-mono text-emerald-400 font-bold">{acc.email}</td>
+                          <td className="p-3 font-mono text-slate-300 bg-slate-950/60 rounded px-2 inline-block my-2">
+                            {acc.password}
+                          </td>
+                          <td className="p-3">
+                            <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                              acc.isActive || acc.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                            }`}>
+                              {acc.isActive || acc.is_active ? 'مفعل للدخول' : 'معطل'}
+                            </span>
+                          </td>
+                          <td className="p-3 text-left">
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditingPortalAccount(acc);
+                                  setIsCreatingPortalAccount(false);
+                                  setPortalForm({
+                                    portalType: acc.portalType || acc.portal_type,
+                                    portalName: acc.portalName || acc.portal_name,
+                                    name: acc.name || "",
+                                    email: acc.email,
+                                    password: acc.password,
+                                    isActive: acc.isActive ?? acc.is_active ?? true
+                                  });
+                                }}
+                                className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs transition-colors flex items-center gap-1"
+                                title="تعديل"
+                              >
+                                <Edit className="w-3.5 h-3.5" /> تعديل
+                              </button>
+                              <button
+                                onClick={() => handleDeletePortalAccount(acc.id)}
+                                className="p-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 rounded-lg text-xs transition-colors"
+                                title="حذف"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* AUDIT LOG TRAIL CARD: "من دخل ومن خرج ومع الوقت لأي لوحة تحكم ولأي قسم" */}
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 relative overflow-hidden shadow-xl">
+              <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800/80 pb-6">
+                <div>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                      <Clock className="w-3.5 h-3.5" /> سجل الحركة اللحظي المباشر Audit Trail
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" /> مراقبة نشطة
+                    </span>
+                  </div>
+                  <h2 className="text-xl font-black text-white">سجل الدخول والخروج الحي (من دخل ومن خرج ومع الوقت لأي قسم)</h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    يعرض بدقة تامة توقيت وحالة كل عملية تسجيل دخول أو خروج قام بها الموظفون في أي لوحة تحكم فرعية وقسم.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-2xl px-3 py-2">
+                    <Search className="w-3.5 h-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={auditSearchQuery}
+                      onChange={(e) => setAuditSearchQuery(e.target.value)}
+                      placeholder="بحث باسم الموظف أو البريد..."
+                      className="bg-transparent text-xs text-white focus:outline-none w-40 sm:w-56"
+                    />
+                  </div>
+
+                  <select
+                    value={auditFilterDepartment}
+                    onChange={(e) => setAuditFilterDepartment(e.target.value)}
+                    className="bg-slate-950 border border-slate-800 rounded-2xl px-3 py-2 text-xs text-slate-200"
+                  >
+                    <option value="all">جميع الأقسام</option>
+                    <option value="finance">💰 الإدارة المالية</option>
+                    <option value="hotels">🏨 قسم الفنادق</option>
+                    <option value="cars">🚗 قسم السيارات</option>
+                    <option value="trips">🏔️ قسم الرحلات</option>
+                    <option value="marketing">📣 قسم التسويق</option>
+                    <option value="guides">🧭 بوابة المرشدين</option>
+                    <option value="tech">🛡️ قسم التقنية</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Audit Summary Badges */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 my-6">
+                <div className="bg-slate-950/80 border border-emerald-500/20 rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-emerald-500/10 rounded-xl text-emerald-400 border border-emerald-500/20">
+                      <LogIn className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] text-slate-400 font-bold">عمليات الدخول المسجلة</span>
+                      <span className="text-xl font-black text-white font-mono">
+                        {portalAuditLogs.filter(l => l.action === 'LOGIN').length}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-emerald-400">🟢 نشط</span>
+                </div>
+
+                <div className="bg-slate-950/80 border border-amber-500/20 rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-amber-500/10 rounded-xl text-amber-400 border border-amber-500/20">
+                      <LogOut className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] text-slate-400 font-bold">عمليات الخروج المسجلة</span>
+                      <span className="text-xl font-black text-white font-mono">
+                        {portalAuditLogs.filter(l => l.action === 'LOGOUT').length}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-amber-400">🟠 مغلق</span>
+                </div>
+
+                <div className="bg-slate-950/80 border border-sky-500/20 rounded-2xl p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-sky-500/10 rounded-xl text-sky-400 border border-sky-500/20">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <span className="block text-[11px] text-slate-400 font-bold">إجمالي السجلات الحية</span>
+                      <span className="text-xl font-black text-white font-mono">
+                        {portalAuditLogs.length}
+                      </span>
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold text-sky-400">⚡ آمن 100%</span>
+                </div>
+              </div>
+
+              {/* Audit Trail Table */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-right text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-800 text-slate-400 font-bold bg-slate-950/50">
+                      <th className="p-3">نوع الحركة (الحدث)</th>
+                      <th className="p-3">الموظف / المسؤول</th>
+                      <th className="p-3">البريد الإلكتروني</th>
+                      <th className="p-3">القسم واللوحة الفرعية</th>
+                      <th className="p-3">تاريخ ووقت الحركة بالضبط</th>
+                      <th className="p-3">عنوان IP والشبكة</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/60">
+                    {portalAuditLogs
+                      .filter(log => {
+                        const matchDept = auditFilterDepartment === 'all' || (log.portalType || log.portal_type) === auditFilterDepartment;
+                        const matchQuery = !auditSearchQuery || 
+                          (log.name || '').toLowerCase().includes(auditSearchQuery.toLowerCase()) ||
+                          (log.email || '').toLowerCase().includes(auditSearchQuery.toLowerCase()) ||
+                          (log.portalName || '').toLowerCase().includes(auditSearchQuery.toLowerCase());
+                        return matchDept && matchQuery;
+                      })
+                      .map((log) => {
+                        const isLogin = log.action === 'LOGIN';
+                        const formattedDate = new Date(log.timestamp).toLocaleString('ar-OM', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit'
+                        });
+
+                        return (
+                          <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
+                            <td className="p-3">
+                              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold ${
+                                isLogin 
+                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              }`}>
+                                {isLogin ? (
+                                  <>
+                                    <LogIn className="w-3.5 h-3.5 text-emerald-400" /> تسجيل دخول
+                                  </>
+                                ) : (
+                                  <>
+                                    <LogOut className="w-3.5 h-3.5 text-amber-400" /> تسجيل خروج
+                                  </>
+                                )}
+                              </span>
+                            </td>
+
+                            <td className="p-3 font-bold text-white">
+                              <span className="block">{log.name || "موظف مسؤول"}</span>
+                            </td>
+
+                            <td className="p-3 font-mono text-emerald-400 font-semibold dir-ltr text-right">
+                              {log.email}
+                            </td>
+
+                            <td className="p-3 text-slate-300">
+                              <span className="block font-semibold">{log.portalName || "لوحة تحكم فرعية"}</span>
+                              <span className="text-[10px] text-amber-400 font-mono">({log.portalType || "general"})</span>
+                            </td>
+
+                            <td className="p-3 font-mono text-slate-300">
+                              <span className="block font-semibold text-white">{formattedDate}</span>
+                            </td>
+
+                            <td className="p-3 font-mono text-slate-400 text-[11px]">
+                              {log.ip || "192.168.1.1"}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         )}
 

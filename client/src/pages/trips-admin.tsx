@@ -22,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useToast } from "@/hooks/use-toast";
-import logoImage from "@assets/شومة_1768320219408.jpg";
+import logoImage from "@/assets/shouma-logo.png";
 
 interface GroupTripRequest {
   id: number;
@@ -65,32 +65,53 @@ export default function TripsAdminPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Authenticate admin check
+  const [authEmail, setAuthEmail] = useState("trips@shouma.com");
   const [authPassword, setAuthPassword] = useState("");
-  const [isAuthorized, setIsAuthorized] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [isAuthorized, setIsAuthorized] = useState(() => {
+    return localStorage.getItem("trips_admin_authorized") === "true";
+  });
 
-  useEffect(() => {
-    // Check local storage authorization if exists
-    const isAuthed = localStorage.getItem("trips_admin_authorized") === "true";
-    if (isAuthed) {
-      setIsAuthorized(true);
-    }
-  }, []);
-
-  const handleAuthSubmit = (e: React.FormEvent) => {
+  const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (authPassword === "shouma2026" || authPassword === "admin123") {
-      setIsAuthorized(true);
-      localStorage.setItem("trips_admin_authorized", "true");
+    if (!authEmail || !authPassword) {
       toast({
-        title: "تم التحقق بنجاح",
-        description: "مرحباً بك في لوحة تحكم الرحلات المتقدمة.",
-      });
-    } else {
-      toast({
-        title: "رمز غير صحيح",
-        description: "الرجاء إدخال الرمز الصحيح للوجين الإشراف.",
+        title: "خطأ في البيانات",
+        description: "يرجى كتابة البريد الإلكتروني وكلمة المرور.",
         variant: "destructive",
       });
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      const res = await fetch("/api/portal-auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ portalType: "trips", email: authEmail, password: authPassword }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setIsAuthorized(true);
+        localStorage.setItem("trips_admin_authorized", "true");
+        toast({
+          title: "تم التحقق بنجاح",
+          description: "مرحباً بك في لوحة تحكم الرحلات والفعاليات.",
+        });
+      } else {
+        toast({
+          title: "فشل الدخول",
+          description: data.message || "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "خطأ بالشبكة",
+        description: "عذراً، تعذر الاتصال بالخادم.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoggingIn(false);
     }
   };
 
@@ -210,14 +231,27 @@ export default function TripsAdminPage() {
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-4 font-sans text-right dir-rtl">
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-6">
           <div className="text-center space-y-2">
-            <img src={logoImage} alt="شومة" className="h-16 mx-auto rounded-full border border-amber-500/20" />
-            <h2 className="text-xl font-black text-white">لوحة تحكم الرحلات الجماعية</h2>
-            <p className="text-xs text-slate-400">يرجى إدخال رمز المرور الآمن للوصول والتعديل الفوري</p>
+            <img src={logoImage} alt="شومة" className="h-20 w-auto mx-auto rounded-xl object-contain drop-shadow-md border border-amber-500/20" />
+            <h2 className="text-xl font-black text-white">لوحة تحكم الرحلات والفعاليات</h2>
+            <p className="text-xs text-slate-400">يرجى إدخال البريد الإلكتروني وكلمة المرور المضافة من مدير النظام</p>
           </div>
 
           <form onSubmit={handleAuthSubmit} className="space-y-4">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-slate-300 block">رمز الإشراف الخاص بك:</label>
+              <label className="text-xs font-bold text-slate-300 block">البريد الإلكتروني:</label>
+              <Input
+                type="email"
+                placeholder="trips@shouma.com"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                className="w-full bg-slate-950 border-slate-800 rounded-xl text-right text-white dir-ltr"
+                style={{ color: '#ffffff', backgroundColor: '#020617' }}
+                required
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-300 block">كلمة المرور:</label>
               <Input
                 type="password"
                 placeholder="••••••••••••"
@@ -229,8 +263,8 @@ export default function TripsAdminPage() {
               />
             </div>
 
-            <Button type="submit" className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs transition-all">
-              تصفح لوحة التحكم والتحقق
+            <Button type="submit" disabled={isLoggingIn} className="w-full h-11 bg-amber-500 hover:bg-amber-600 text-slate-950 font-black rounded-xl text-xs transition-all">
+              {isLoggingIn ? "جاري التحقق..." : "تصفح لوحة التحكم والتحقق"}
             </Button>
           </form>
 
@@ -248,7 +282,7 @@ export default function TripsAdminPage() {
       <header className="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800/80 px-4 py-3.5">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <img src={logoImage} alt="شومة" className="h-10 w-auto rounded-full border border-amber-500/10" />
+            <img src={logoImage} alt="شومة" className="h-10 w-auto rounded-lg object-contain border border-amber-500/20" />
             <div>
               <h1 className="text-md font-black text-amber-400 flex items-center gap-1.5">
                 <PlaneTakeoff className="w-5 h-5" />
@@ -260,10 +294,10 @@ export default function TripsAdminPage() {
 
           <div className="flex items-center gap-3">
             <ThemeToggle />
-            <Button size="xs" variant="outline" className="text-xs bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700" onClick={() => setLocation("/home")}>
+            <Button size="sm" variant="outline" className="text-xs bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700" onClick={() => setLocation("/home")}>
               زيارة موقع شومة
             </Button>
-            <Button size="xs" variant="destructive" className="text-xs cursor-pointer" onClick={() => {
+            <Button size="sm" variant="destructive" className="text-xs cursor-pointer" onClick={() => {
               localStorage.removeItem("trips_admin_authorized");
               setIsAuthorized(false);
             }}>
@@ -360,7 +394,7 @@ export default function TripsAdminPage() {
                     <CardTitle className="text-md font-bold text-white">طلبات عروض تفصيل الرحلات الجماعية من زوار الموقع</CardTitle>
                     <CardDescription className="text-xs text-slate-400 mt-1">تظهر هنا المدخلات التي قام العملاء بتعبئتها في المسارات الجماعية المخصصة</CardDescription>
                   </div>
-                  <Button size="xs" className="text-xs bg-slate-800 text-slate-100 hover:bg-slate-700" onClick={loadRequests}>تحديث الطلبات</Button>
+                  <Button size="sm" className="text-xs bg-slate-800 text-slate-100 hover:bg-slate-700" onClick={loadRequests}>تحديث الطلبات</Button>
                 </div>
               </CardHeader>
               <CardContent className="p-0">

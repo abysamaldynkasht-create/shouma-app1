@@ -63,6 +63,54 @@ export default function Dashboard({ programmerName, onLogout }: DashboardProps) 
   const [isLinkingLoading, setIsLinkingLoading] = useState(false);
   const [bankLinkError, setBankLinkError] = useState('');
 
+  // Real-time validation states
+  const [isValidatingBank, setIsValidatingBank] = useState(false);
+  const [bankValidationStatus, setBankValidationStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
+  const [bankValidationMessage, setBankValidationMessage] = useState('');
+
+  // Debounced real-time bank verification
+  useEffect(() => {
+    if (!isLinkingFormOpen || !bankAccountNumber.trim()) {
+      setBankValidationStatus('idle');
+      setBankValidationMessage('');
+      setIsValidatingBank(false);
+      return;
+    }
+
+    setIsValidatingBank(true);
+    setBankValidationStatus('idle');
+    setBankValidationMessage('');
+
+    const delayDebounce = setTimeout(() => {
+      fetch('/api/validate-bank', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ accountNumber: bankAccountNumber })
+      })
+        .then(res => res.json())
+        .then(data => {
+          setIsValidatingBank(false);
+          if (data.valid) {
+            setBankValidationStatus('valid');
+            setBankValidationMessage(data.messageAr || 'رقم الحساب صالح ومطابق لمعايير بنك مسقط.');
+          } else {
+            setBankValidationStatus('invalid');
+            setBankValidationMessage(data.messageAr || 'رقم الحساب غير صالح.');
+          }
+        })
+        .catch(err => {
+          console.error("Bank validation API error:", err);
+          setIsValidatingBank(false);
+          setBankValidationStatus('invalid');
+          setBankValidationMessage('فشل الاتصال بخادم التحقق من الحسابات البنكية.');
+        });
+    }, 600);
+
+    return () => clearTimeout(delayDebounce);
+  }, [bankAccountNumber, isLinkingFormOpen]);
+
   const handleLinkBank = (e: React.FormEvent) => {
     e.preventDefault();
     setBankLinkError('');
@@ -70,9 +118,14 @@ export default function Dashboard({ programmerName, onLogout }: DashboardProps) 
       setBankLinkError('يرجى ملء جميع الحقول المطلوبة لتكتمل عملية الربط.');
       return;
     }
-    // Simple verification
-    if (bankAccountNumber.trim().length < 8) {
-      setBankLinkError('تنبيه: يجب أن يحتوي رقم الحساب على 8 خانات رقمية على الأقل.');
+
+    if (isValidatingBank) {
+      setBankLinkError('يرجى الانتظار لحين اكتمال التحقق الفوري من رقم الحساب البنكي.');
+      return;
+    }
+
+    if (bankValidationStatus === 'invalid') {
+      setBankLinkError(bankValidationMessage || 'فشل التحقق من رقم الحساب البنكي. يرجى إدخال صيغة صحيحة.');
       return;
     }
 
@@ -761,6 +814,28 @@ export default function Dashboard({ programmerName, onLogout }: DashboardProps) 
                                 placeholder="مثال: OM73MSCT0010042301129081"
                                 className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-xl text-slate-100 placeholder-slate-600 focus:outline-none focus:border-red-500/50 text-xs text-left font-mono"
                               />
+                              {(isValidatingBank || bankValidationStatus !== 'idle') && (
+                                <div className="mt-1.5 flex items-center gap-1 text-[10px] transition-all">
+                                  {isValidatingBank && (
+                                    <>
+                                      <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+                                      <span className="text-amber-500 font-medium">جاري التحقق الفوري من الصيغة والطول...</span>
+                                    </>
+                                  )}
+                                  {!isValidatingBank && bankValidationStatus === 'valid' && (
+                                    <>
+                                      <Check className="w-3 h-3 text-emerald-500 font-bold" />
+                                      <span className="text-emerald-400 font-medium">{bankValidationMessage}</span>
+                                    </>
+                                  )}
+                                  {!isValidatingBank && bankValidationStatus === 'invalid' && (
+                                    <>
+                                      <X className="w-3 h-3 text-rose-500 font-bold" />
+                                      <span className="text-rose-400 font-medium">{bankValidationMessage}</span>
+                                    </>
+                                  )}
+                                </div>
+                              )}
                             </div>
                           </div>
 

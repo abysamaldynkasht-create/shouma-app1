@@ -21,6 +21,10 @@ process.on("unhandledRejection", (reason, promise) => {
 });
 
 process.on("uncaughtException", (err) => {
+  if ((err as any).code === "EPIPE" || (err as any).code === "ECONNRESET") {
+    // Ignore broken pipes or connection resets from aborted SSE streams or closed client tabs
+    return;
+  }
   console.error("⚠️ Uncaught Exception:", err);
 });
 
@@ -90,7 +94,11 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  await registerRoutes(httpServer, app);
+  try {
+    await registerRoutes(httpServer, app);
+  } catch (routeErr) {
+    console.error("Error registering routes:", routeErr);
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
@@ -106,10 +114,18 @@ app.use((req, res, next) => {
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
   if (process.env.NODE_ENV === "production") {
-    serveStatic(app);
+    try {
+      serveStatic(app);
+    } catch (staticErr) {
+      console.error("Error setting up static serving:", staticErr);
+    }
   } else {
-    const { setupVite } = await import("./vite");
-    await setupVite(httpServer, app);
+    try {
+      const { setupVite } = await import("./vite");
+      await setupVite(httpServer, app);
+    } catch (viteErr) {
+      console.error("Error setting up Vite dev server:", viteErr);
+    }
   }
 
   // ALWAYS serve the app on port 3000 under the AI Studio infrastructure.

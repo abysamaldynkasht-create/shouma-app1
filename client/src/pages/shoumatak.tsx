@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -166,6 +166,21 @@ export default function ShoumatakPage() {
     preferredActivities: [],
     governorates: [],
   });
+
+  const [hasActiveItinerary, setHasActiveItinerary] = useState(false);
+
+  useEffect(() => {
+    try {
+      const active = localStorage.getItem("shouma_active_itinerary");
+      const saved = localStorage.getItem("shouma_saved_itineraries");
+      const hasSaved = saved ? JSON.parse(saved).length > 0 : false;
+      if (active || hasSaved) {
+        setHasActiveItinerary(true);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  }, []);
 
   const currentQuestion = questions[currentStep];
   const progress = ((currentStep) / (questions.length - 1)) * 100;
@@ -350,6 +365,17 @@ export default function ShoumatakPage() {
             </div>
 
             <div className="flex items-center gap-2">
+              {hasActiveItinerary && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setLocation("/itinerary")}
+                  className="text-primary hover:text-primary hover:bg-primary/10"
+                  title={isRTL ? "الجدول السياحي" : "Itinerary"}
+                >
+                  <Compass className="w-5 h-5 animate-pulse" />
+                </Button>
+              )}
               <ThemeToggle />
               <LanguageSwitcher />
             </div>

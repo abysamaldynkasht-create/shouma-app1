@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ArrowRight, ArrowLeft, MapPin, Gem, Star, ExternalLink } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
+import { useQuery } from "@tanstack/react-query";
 
 import finsBeachImg from "@/assets/fins-beach.png";
 import jabalSamhanImg from "@/assets/jabal-samhan.png";
@@ -118,6 +119,31 @@ export default function HiddenGemsPage() {
   const [, setLocation] = useLocation();
   const { t, language, isRTL } = useLanguage();
 
+  const { data: dbDrobList = [] } = useQuery<any[]>({
+    queryKey: ["/api/drob-shouma"],
+    queryFn: async () => {
+      const r = await fetch("/api/drob-shouma");
+      return r.ok ? r.json() : [];
+    }
+  });
+
+  const mappedDbDrob: HiddenGem[] = dbDrobList.map((d: any) => ({
+    id: `db-${d.id}`,
+    name: d.name,
+    nameEn: d.name_en || d.nameEn || d.name || "",
+    description: d.description,
+    descriptionEn: d.description_en || d.descriptionEn || d.description || "",
+    location: d.location,
+    locationEn: d.location_en || d.locationEn || d.location || "",
+    governorate: d.governorate,
+    governorateEn: d.governorate_en || d.governorateEn || d.governorate || "",
+    image: d.image,
+    rating: typeof d.rating === 'string' ? parseFloat(d.rating) : (d.rating || 4.8),
+    mapUrl: d.map_url || d.mapUrl
+  }));
+
+  const allGems = [...hiddenGems, ...mappedDbDrob];
+
   const BackArrow = isRTL ? ArrowRight : ArrowLeft;
 
   const getLocalizedText = (ar: string, en: string) => {
@@ -156,7 +182,7 @@ export default function HiddenGemsPage() {
         </div>
 
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {hiddenGems.map((gem) => (
+          {allGems.map((gem) => (
             <Card 
               key={gem.id} 
               className="overflow-hidden hover-elevate"

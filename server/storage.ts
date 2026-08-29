@@ -9,7 +9,10 @@ import {
   type InsertTourRequest,
   users,
   groupTripRequests,
-  tourRequests
+  tourRequests,
+  userSettings,
+  type UserSettings,
+  type InsertUserSettings
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -18,7 +21,10 @@ import { eq, desc, sql } from "drizzle-orm";
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  createUser(user: InsertUser & { isVerified?: boolean; verificationCode?: string; verifiedVia?: string }): Promise<User>;
+  updateUserVerification(username: string, isVerified: boolean, code?: string): Promise<void>;
+  setUserVerificationDetails(username: string, code: string, verifiedVia: string): Promise<void>;
+  updateUserPassword(username: string, newPassword: string): Promise<void>;
   getRestaurantReviews(restaurantId: string): Promise<RestaurantReview[]>;
   createRestaurantReview(review: InsertRestaurantReview): Promise<RestaurantReview>;
   createGroupTripRequest(request: InsertGroupTripRequest): Promise<GroupTripRequest>;
@@ -30,6 +36,11 @@ export interface IStorage {
   updateTourRequestStatus(id: number, status: string): Promise<TourRequest>;
   getGuideAvailability(guideId: number): Promise<boolean>;
   setGuideAvailability(guideId: number, available: boolean): Promise<boolean>;
+
+  // User settings persistent operations
+  getUserSettings(userId: string): Promise<UserSettings | undefined>;
+  createUserSettings(settings: InsertUserSettings): Promise<UserSettings>;
+  updateUserSettings(userId: string, settings: Partial<InsertUserSettings>): Promise<UserSettings>;
 
   // Dynamic admin additions and updates
   getDbTourGuides(): Promise<any[]>;
@@ -76,8 +87,42 @@ export interface IStorage {
 
   getHikingBookings(): Promise<any[]>;
   createHikingBooking(booking: any): Promise<any>;
+  clearHikingBookings(): Promise<void>;
   getHotelBookings(): Promise<any[]>;
   createHotelBooking(booking: any): Promise<any>;
+  clearHotelBookings(): Promise<void>;
+
+  getDbTransactions(): Promise<any[]>;
+  createDbTransaction(tx: any): Promise<any>;
+  deleteDbTransaction(id: number): Promise<void>;
+  clearDbTransactions(): Promise<void>;
+
+  // Tour panel & Admin management items
+  getApplications(): Promise<any[]>;
+  createApplication(app: any): Promise<any>;
+  updateApplicationStatus(id: number, status: string): Promise<any>;
+  deleteApplication(id: number): Promise<void>;
+
+  getOfficeConfig(): Promise<any>;
+  updateOfficeConfig(config: any): Promise<any>;
+
+  getTrips(): Promise<any[]>;
+  createTrip(trip: any): Promise<any>;
+  updateTrip(id: number, trip: any): Promise<any>;
+  deleteTrip(id: number): Promise<void>;
+
+  getTickets(): Promise<any[]>;
+  createTicket(ticket: any): Promise<any>;
+  updateTicketStatus(id: number, status: string): Promise<any>;
+  deleteTicket(id: number): Promise<void>;
+
+  getPortalAccounts(): Promise<any[]>;
+  createPortalAccount(acc: any): Promise<any>;
+  updatePortalAccount(id: number, acc: any): Promise<any>;
+  deletePortalAccount(id: number): Promise<void>;
+  authenticatePortalAccount(portalType: string, email: string, pass: string): Promise<any>;
+  getPortalAuditLogs(): Promise<any[]>;
+  addPortalAuditLog(entry: any): Promise<any>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -87,13 +132,37 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
+    if (!username) return undefined;
+    const clean = username.trim();
+    const lower = clean.toLowerCase();
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(
+        sql`LOWER(${users.username}) = ${lower} OR LOWER(${users.email}) = ${lower} OR ${users.phone} = ${clean}`
+      );
     return user;
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser & { isVerified?: boolean; verificationCode?: string; verifiedVia?: string }): Promise<User> {
     const [user] = await db.insert(users).values(insertUser).returning();
     return user;
+  }
+
+  async updateUserVerification(username: string, isVerified: boolean, code?: string): Promise<void> {
+    const updateObj: any = { isVerified };
+    if (code !== undefined) {
+      updateObj.verificationCode = code;
+    }
+    await db.update(users).set(updateObj).where(eq(users.username, username));
+  }
+
+  async setUserVerificationDetails(username: string, code: string, verifiedVia: string): Promise<void> {
+    await db.update(users).set({ verificationCode: code, verifiedVia }).where(eq(users.username, username));
+  }
+
+  async updateUserPassword(username: string, newPassword: string): Promise<void> {
+    await db.update(users).set({ password: newPassword, verificationCode: null, isVerified: true }).where(eq(users.username, username));
   }
 
   async getRestaurantReviews(restaurantId: string): Promise<RestaurantReview[]> {
@@ -318,11 +387,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDbAttraction(attr: any): Promise<any> {
-    const tags = Array.isArray(attr.tags) ? attr.tags : (attr.tags ? String(attr.tags).split(',').map(x => x.trim()) : []);
+    const tags = Array.isArray(attr.tags) ? attr.tags : (attr.tags ? String(attr.tags).split(',').map(x => x.trim()).filter(Boolean) : []);
     const tagsStr = `{${tags.map((f: any) => `"${String(f).replace(/"/g, '\\"')}"`).join(',')}}`;
     const res = await db.execute(sql`
-      INSERT INTO db_attractions (name, name_ar, description, governorate, governorate_id, wilayat, category, image, map_url, rating, additional_images, tags)
-      VALUES (${attr.name}, ${attr.nameAr}, ${attr.description}, ${attr.governorate}, ${attr.governorateId}, ${attr.wilayat}, ${attr.category}, ${attr.image}, ${attr.mapUrl}, ${attr.rating || '4.8'}, ${attr.additionalImages || attr.additional_images || ''}, ${tagsStr})
+      INSERT INTO db_attractions (name, name_ar, description, description_en, governorate, governorate_id, wilayat, category, image, map_url, rating, additional_images, tags)
+      VALUES (${attr.name || attr.name_en || attr.nameAr || ''}, ${attr.nameAr || attr.name_ar || attr.name || ''}, ${attr.description || ''}, ${attr.descriptionEn || attr.description_en || ''}, ${attr.governorate || ''}, ${attr.governorateId || attr.governorate_id || 'muscat'}, ${attr.wilayat || ''}, ${attr.category || 'nature'}, ${attr.image || ''}, ${attr.mapUrl || attr.map_url || ''}, ${String(attr.rating || '4.8')}, ${attr.additionalImages || attr.additional_images || ''}, ${tagsStr}::text[])
       RETURNING *
     `);
     return res.rows[0];
@@ -338,7 +407,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDbHotel(hotel: any): Promise<any> {
-    const amens = Array.isArray(hotel.amenities) ? hotel.amenities : (hotel.amenities ? String(hotel.amenities).split(',').map(x => x.trim()) : []);
+    const amens = Array.isArray(hotel.amenities) ? hotel.amenities : (hotel.amenities ? String(hotel.amenities).split(',').map(x => x.trim()).filter(Boolean) : []);
     const amensStr = `{${amens.map((f: any) => `"${String(f).replace(/"/g, '\\"')}"`).join(',')}}`;
     const splitShouma = hotel.splitShoumaPct !== undefined ? parseInt(hotel.splitShoumaPct, 10) : 15;
     const splitHotel = hotel.splitHotelPct !== undefined ? parseInt(hotel.splitHotelPct, 10) : 85;
@@ -346,7 +415,7 @@ export class DatabaseStorage implements IStorage {
     const password = hotel.password || null;
     const res = await db.execute(sql`
       INSERT INTO db_hotels (name, name_ar, description, city, region, image, rating, price_per_night, stars, phone, map_url, additional_images, bank_account, amenities, split_shouma_pct, split_hotel_pct, email, password)
-      VALUES (${hotel.name}, ${hotel.nameAr}, ${hotel.description}, ${hotel.city}, ${hotel.region}, ${hotel.image}, ${hotel.rating || 4.8}, ${hotel.pricePerNight || 55}, ${hotel.stars || 4}, ${hotel.phone}, ${hotel.mapUrl}, ${hotel.additionalImages || hotel.additional_images || ''}, ${hotel.bankAccount || hotel.bank_account || ''}, ${amensStr}, ${splitShouma}, ${splitHotel}, ${email}, ${password})
+      VALUES (${hotel.name}, ${hotel.nameAr || hotel.name_ar || hotel.name}, ${hotel.description}, ${hotel.city}, ${hotel.region}, ${hotel.image}, ${hotel.rating || 4.8}, ${hotel.pricePerNight || hotel.price_per_night || 55}, ${hotel.stars || 4}, ${hotel.phone || ''}, ${hotel.mapUrl || hotel.map_url || ''}, ${hotel.additionalImages || hotel.additional_images || ''}, ${hotel.bankAccount || hotel.bank_account || ''}, ${amensStr}::text[], ${splitShouma}, ${splitHotel}, ${email}, ${password})
       RETURNING *
     `);
     return res.rows[0];
@@ -462,18 +531,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDbHimamShouma(place: any): Promise<any> {
-    const features = Array.isArray(place.features) ? place.features : [];
+    const features = Array.isArray(place.features) ? place.features : (place.features ? String(place.features).split(',').map((x: string) => x.trim()).filter(Boolean) : []);
     const featuresStr = `{${features.map((f: any) => `"${String(f).replace(/"/g, '\\"')}"`).join(',')}}`;
     
-    const featuresEn = Array.isArray(place.features_en || place.featuresEn) ? (place.features_en || place.featuresEn) : [];
+    const featuresEn = Array.isArray(place.features_en || place.featuresEn) ? (place.features_en || place.featuresEn) : (place.features_en || place.featuresEn ? String(place.features_en || place.featuresEn).split(',').map((x: string) => x.trim()).filter(Boolean) : []);
     const featuresEnStr = `{${featuresEn.map((f: any) => `"${String(f).replace(/"/g, '\\"')}"`).join(',')}}`;
 
     const res = await db.execute(sql`
       INSERT INTO db_himam_shouma (name, name_en, description, description_en, location, location_en, category, features, features_en, rating, phone, map_url, fully_accessible)
       VALUES (
-        ${place.name}, ${place.nameEn || place.name_en}, ${place.description}, ${place.descriptionEn || place.description_en},
-        ${place.location}, ${place.locationEn || place.location_en}, ${place.category || 'wheelchair'},
-        ${featuresStr}, ${featuresEnStr}, ${place.rating || '4.8'}, ${place.phone || ''}, ${place.mapUrl || place.map_url || ''}, ${place.fullyAccessible !== false}
+        ${place.name || place.nameAr || ''}, ${place.nameEn || place.name_en || place.name || ''}, ${place.description || ''}, ${place.descriptionEn || place.description_en || ''},
+        ${place.location || ''}, ${place.locationEn || place.location_en || ''}, ${place.category || 'wheelchair'},
+        ${featuresStr}::text[], ${featuresEnStr}::text[], ${String(place.rating || '4.8')}, ${place.phone || ''}, ${place.mapUrl || place.map_url || ''}, ${place.fullyAccessible !== false}
       )
       RETURNING *
     `);
@@ -548,8 +617,25 @@ export class DatabaseStorage implements IStorage {
     return res.rows[0];
   }
 
+  async clearHikingBookings(): Promise<void> {
+    await db.execute(sql`DELETE FROM db_hiking_bookings`);
+  }
+
+  async clearHotelBookings(): Promise<void> {
+    await db.execute(sql`DELETE FROM db_hotel_bookings`);
+  }
+
   async getHotelBookings(): Promise<any[]> {
-    const res = await db.execute(sql`SELECT * FROM db_hotel_bookings ORDER BY id DESC`);
+    const res = await db.execute(sql`
+      SELECT b.*, 
+             r.price_base, 
+             r.commission_pct, 
+             r.commission_amount, 
+             r.price_final
+      FROM db_hotel_bookings b
+      LEFT JOIN db_hotel_rooms r ON b.hotel_id = r.hotel_id AND (b.room_name = r.name_ar OR b.room_name = r.name)
+      ORDER BY b.id DESC
+    `);
     return res.rows;
   }
 
@@ -593,6 +679,190 @@ export class DatabaseStorage implements IStorage {
   async deleteDbActivity(id: number): Promise<void> {
     await db.execute(sql`DELETE FROM db_activities WHERE id = ${id}`);
   }
+
+  async getDbTransactions(): Promise<any[]> {
+    const res = await db.execute(sql`SELECT * FROM db_finance_transactions ORDER BY date DESC, id DESC`);
+    return res.rows;
+  }
+
+  async createDbTransaction(tx: any): Promise<any> {
+    const amountNum = parseFloat(tx.amount || 0);
+    const res = await db.execute(sql`
+      INSERT INTO db_finance_transactions (type, category, amount, description, date, reference_id)
+      VALUES (${tx.type}, ${tx.category}, ${amountNum}, ${tx.description}, ${tx.date || new Date().toISOString().split('T')[0]}, ${tx.reference_id || null})
+      RETURNING *
+    `);
+    return res.rows[0];
+  }
+
+  async deleteDbTransaction(id: number): Promise<void> {
+    await db.execute(sql`DELETE FROM db_finance_transactions WHERE id = ${id}`);
+  }
+
+  async clearDbTransactions(): Promise<void> {
+    await db.execute(sql`DELETE FROM db_finance_transactions`);
+  }
+
+  async getUserSettings(userId: string): Promise<UserSettings | undefined> {
+    const [settings] = await db.select().from(userSettings).where(eq(userSettings.userId, userId));
+    return settings;
+  }
+
+  async createUserSettings(settings: InsertUserSettings): Promise<UserSettings> {
+    const [newSettings] = await db.insert(userSettings).values({
+      ...settings,
+      updatedAt: new Date(),
+    }).returning();
+    return newSettings;
+  }
+
+  async updateUserSettings(userId: string, settings: Partial<InsertUserSettings>): Promise<UserSettings> {
+    const [updated] = await db
+      .update(userSettings)
+      .set({
+        ...settings,
+        updatedAt: new Date(),
+      })
+      .where(eq(userSettings.userId, userId))
+      .returning();
+    if (!updated) {
+      throw new Error(`User settings for user ${userId} not found`);
+    }
+    return updated;
+  }
+
+  // Tour panel & Admin management items implementation
+  async getApplications(): Promise<any[]> { return getModuleApplications(); }
+  async createApplication(app: any): Promise<any> { return createModuleApplication(app); }
+  async updateApplicationStatus(id: number, status: string): Promise<any> { return updateModuleApplicationStatus(id, status); }
+  async deleteApplication(id: number): Promise<void> { return deleteModuleApplication(id); }
+
+  async getOfficeConfig(): Promise<any> { return getModuleOfficeConfig(); }
+  async updateOfficeConfig(config: any): Promise<any> { return updateModuleOfficeConfig(config); }
+
+  async getTrips(): Promise<any[]> { return getModuleTrips(); }
+  async createTrip(trip: any): Promise<any> { return createModuleTrip(trip); }
+  async updateTrip(id: number, trip: any): Promise<any> { return updateModuleTrip(id, trip); }
+  async deleteTrip(id: number): Promise<void> { return deleteModuleTrip(id); }
+
+  async getTickets(): Promise<any[]> { return getModuleTickets(); }
+  async createTicket(ticket: any): Promise<any> { return createModuleTicket(ticket); }
+  async updateTicketStatus(id: number, status: string): Promise<any> { return updateModuleTicketStatus(id, status); }
+  async deleteTicket(id: number): Promise<void> { return deleteModuleTicket(id); }
+
+  async getPortalAccounts(): Promise<any[]> {
+    try {
+      const res = await db.execute(sql`SELECT * FROM db_portal_accounts ORDER BY id ASC`);
+      if (res.rows && res.rows.length > 0) {
+        return res.rows.map((r: any) => ({
+          id: r.id,
+          portalType: r.portal_type,
+          portalName: r.portal_name,
+          email: r.email,
+          password: r.password,
+          name: r.name,
+          isActive: r.is_active,
+          createdAt: r.created_at
+        }));
+      }
+    } catch (e) {
+      // fallback
+    }
+    return getModulePortalAccounts();
+  }
+
+  async createPortalAccount(acc: any): Promise<any> {
+    try {
+      const res = await db.execute(sql`
+        INSERT INTO db_portal_accounts (portal_type, portal_name, email, password, name, is_active)
+        VALUES (${acc.portalType}, ${acc.portalName || acc.portalType}, ${acc.email}, ${acc.password}, ${acc.name}, ${acc.isActive ?? true})
+        RETURNING *
+      `);
+      const r = res.rows[0];
+      return {
+        id: r.id,
+        portalType: r.portal_type,
+        portalName: r.portal_name,
+        email: r.email,
+        password: r.password,
+        name: r.name,
+        isActive: r.is_active,
+        createdAt: r.created_at
+      };
+    } catch (e) {
+      return createModulePortalAccount(acc);
+    }
+  }
+
+  async updatePortalAccount(id: number, acc: any): Promise<any> {
+    try {
+      const res = await db.execute(sql`
+        UPDATE db_portal_accounts
+        SET portal_type = COALESCE(${acc.portalType}, portal_type),
+            portal_name = COALESCE(${acc.portalName}, portal_name),
+            email = COALESCE(${acc.email}, email),
+            password = COALESCE(${acc.password}, password),
+            name = COALESCE(${acc.name}, name),
+            is_active = COALESCE(${acc.isActive}, is_active)
+        WHERE id = ${id}
+        RETURNING *
+      `);
+      const r = res.rows[0];
+      return {
+        id: r.id,
+        portalType: r.portal_type,
+        portalName: r.portal_name,
+        email: r.email,
+        password: r.password,
+        name: r.name,
+        isActive: r.is_active,
+        createdAt: r.created_at
+      };
+    } catch (e) {
+      return updateModulePortalAccount(id, acc);
+    }
+  }
+
+  async deletePortalAccount(id: number): Promise<void> {
+    try {
+      await db.execute(sql`DELETE FROM db_portal_accounts WHERE id = ${id}`);
+    } catch (e) {
+      console.warn("SQL delete portal account fallback:", e);
+    }
+    deleteModulePortalAccount(id);
+  }
+
+  async authenticatePortalAccount(portalType: string, email: string, pass: string): Promise<any> {
+    try {
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const res = await db.execute(sql`
+        SELECT * FROM db_portal_accounts
+        WHERE LOWER(email) = ${cleanEmail} AND password = ${pass} AND is_active = true
+        LIMIT 1
+      `);
+      if (res.rows && res.rows.length > 0) {
+        const r = res.rows[0];
+        return {
+          id: r.id,
+          portalType: r.portal_type,
+          portalName: r.portal_name,
+          email: r.email,
+          name: r.name
+        };
+      }
+    } catch (e) {
+      // fallback
+    }
+    return authenticateModulePortalAccount(portalType, email, pass);
+  }
+
+  async getPortalAuditLogs(): Promise<any[]> {
+    return getModulePortalAuditLogs();
+  }
+
+  async addPortalAuditLog(entry: any): Promise<any> {
+    return addModulePortalAuditLog(entry);
+  }
 }
 
 export class MemStorage implements IStorage {
@@ -603,6 +873,9 @@ export class MemStorage implements IStorage {
   private tourRequests: Map<number, TourRequest>;
   private tourRequestNextId: number;
   private guideAvailability: Map<number, boolean>;
+  private financeTransactions: Map<number, any>;
+  private financeTxNextId: number;
+  private settings: Map<string, UserSettings>;
 
   // MemStorage Stubs for Admin operations
   async getDbTourGuides(): Promise<any[]> { return []; }
@@ -631,14 +904,44 @@ export class MemStorage implements IStorage {
 
   constructor() {
     this.users = new Map();
+    // Seed default demo user
+    const defaultDemoUser: User = {
+      id: "demo-user-1",
+      username: "demo",
+      password: "demo123",
+      email: "demo@shouma.om",
+      phone: "+96890000000",
+      isVerified: true,
+      verificationCode: null,
+      verifiedVia: "email"
+    };
+    this.users.set(defaultDemoUser.id, defaultDemoUser);
     this.restaurantReviews = new Map();
     this.groupTripRequests = new Map();
     this.groupTripNextId = 1;
     this.tourRequests = new Map();
     this.tourRequestNextId = 1;
     this.guideAvailability = new Map();
+    this.financeTransactions = new Map();
+    this.financeTxNextId = 1;
+    this.settings = new Map();
     this.seedRestaurantReviews();
     this.seedGuideAvailability();
+    this.seedFinanceTransactions();
+  }
+
+  private seedFinanceTransactions() {
+    const defaultTxs = [
+      { id: 1, type: "expense", category: "hiking", amount: 120, description: "صيانة وشراء حبال ومعدات تسلق للهايكنق", date: "2026-06-15", reference_id: null, created_at: new Date() },
+      { id: 2, type: "expense", category: "salary", amount: 45, description: "مستحقات مرشد سياحي خارجي لرحلة جبل شمس", date: "2026-06-18", reference_id: null, created_at: new Date() },
+      { id: 3, type: "expense", category: "marketing", amount: 50, description: "حملة إعلانية ممولة للترويج للموسم السياحي", date: "2026-06-20", reference_id: null, created_at: new Date() },
+      { id: 4, type: "income", category: "other", amount: 450, description: "رعاية إعلانية لفعاليات المغامرات من شريك خارجي", date: "2026-06-21", reference_id: null, created_at: new Date() },
+      { id: 5, type: "expense", category: "office", amount: 80, description: "اشتراك إنترنت وتجهيزات مكتبية لمقر الشركة", date: "2026-06-22", reference_id: null, created_at: new Date() }
+    ];
+    for (const tx of defaultTxs) {
+      this.financeTransactions.set(tx.id, tx);
+    }
+    this.financeTxNextId = 6;
   }
 
   private seedGuideAvailability() {
@@ -695,16 +998,58 @@ export class MemStorage implements IStorage {
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
+    if (!username) return undefined;
+    const clean = username.trim();
+    const lower = clean.toLowerCase();
     return Array.from(this.users.values()).find(
-      (user) => user.username === username,
+      (user) =>
+        user.username?.toLowerCase() === lower ||
+        user.email?.toLowerCase() === lower ||
+        user.phone === clean
     );
   }
 
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async createUser(insertUser: InsertUser & { isVerified?: boolean; verificationCode?: string; verifiedVia?: string }): Promise<User> {
     const id = randomUUID();
-    const user: User = { ...insertUser, id };
+    const user: User = {
+      id,
+      username: insertUser.username,
+      password: insertUser.password,
+      email: insertUser.email || null,
+      phone: insertUser.phone || null,
+      isVerified: insertUser.isVerified ?? false,
+      verificationCode: insertUser.verificationCode || null,
+      verifiedVia: insertUser.verifiedVia || null,
+    };
     this.users.set(id, user);
     return user;
+  }
+
+  async updateUserVerification(username: string, isVerified: boolean, code?: string): Promise<void> {
+    const user = await this.getUserByUsername(username);
+    if (user) {
+      user.isVerified = isVerified;
+      if (code !== undefined) {
+        user.verificationCode = code || null;
+      }
+    }
+  }
+
+  async setUserVerificationDetails(username: string, code: string, verifiedVia: string): Promise<void> {
+    const user = await this.getUserByUsername(username);
+    if (user) {
+      user.verificationCode = code;
+      user.verifiedVia = verifiedVia;
+    }
+  }
+
+  async updateUserPassword(username: string, newPassword: string): Promise<void> {
+    const user = await this.getUserByUsername(username);
+    if (user) {
+      user.password = newPassword;
+      user.verificationCode = null;
+      user.isVerified = true;
+    }
   }
 
   async getRestaurantReviews(restaurantId: string): Promise<RestaurantReview[]> {
@@ -729,6 +1074,7 @@ export class MemStorage implements IStorage {
     const tripRequest: GroupTripRequest = {
       ...request,
       id,
+      selectedGovernorate: request.selectedGovernorate ?? null,
       createdAt: new Date(),
     };
     this.groupTripRequests.set(id, tripRequest);
@@ -808,9 +1154,358 @@ export class MemStorage implements IStorage {
 
   async getHikingBookings(): Promise<any[]> { return []; }
   async createHikingBooking(booking: any): Promise<any> { return { ...booking, id: Math.floor(Math.random() * 1000) }; }
+  async clearHikingBookings(): Promise<void> {}
 
   async getHotelBookings(): Promise<any[]> { return []; }
   async createHotelBooking(booking: any): Promise<any> { return { ...booking, id: Math.floor(Math.random() * 1000) }; }
+  async clearHotelBookings(): Promise<void> {}
+
+  async getDbTransactions(): Promise<any[]> {
+    return Array.from(this.financeTransactions.values()).sort((a, b) => b.id - a.id);
+  }
+
+  async createDbTransaction(tx: any): Promise<any> {
+    const id = this.financeTxNextId++;
+    const newTx = {
+      id,
+      type: tx.type,
+      category: tx.category,
+      amount: parseFloat(tx.amount || 0),
+      description: tx.description,
+      date: tx.date || new Date().toISOString().split('T')[0],
+      reference_id: tx.reference_id || null,
+      created_at: new Date()
+    };
+    this.financeTransactions.set(id, newTx);
+    return newTx;
+  }
+
+  async deleteDbTransaction(id: number): Promise<void> {
+    this.financeTransactions.delete(id);
+  }
+
+  async clearDbTransactions(): Promise<void> {
+    this.financeTransactions.clear();
+  }
+
+  async getUserSettings(userId: string): Promise<UserSettings | undefined> {
+    return this.settings.get(userId);
+  }
+
+  async createUserSettings(insertSettings: InsertUserSettings): Promise<UserSettings> {
+    const id = Math.floor(Math.random() * 1000000);
+    const newSettings: UserSettings = {
+      id,
+      userId: insertSettings.userId,
+      currency: insertSettings.currency ?? "OMR",
+      gpsEnabled: insertSettings.gpsEnabled ?? true,
+      distanceUnit: insertSettings.distanceUnit ?? "km",
+      bookingNotifications: insertSettings.bookingNotifications ?? true,
+      promoNotifications: insertSettings.promoNotifications ?? true,
+      updatedAt: new Date(),
+    };
+    this.settings.set(insertSettings.userId, newSettings);
+    return newSettings;
+  }
+
+  async updateUserSettings(userId: string, updateData: Partial<InsertUserSettings>): Promise<UserSettings> {
+    const current = this.settings.get(userId);
+    if (!current) {
+      throw new Error(`User settings for user ${userId} not found`);
+    }
+    const updated: UserSettings = {
+      ...current,
+      ...updateData,
+      updatedAt: new Date(),
+    };
+    this.settings.set(userId, updated);
+    return updated;
+  }
+
+  // Tour panel & Admin management items implementation for MemStorage
+  async getApplications(): Promise<any[]> { return getModuleApplications(); }
+  async createApplication(app: any): Promise<any> { return createModuleApplication(app); }
+  async updateApplicationStatus(id: number, status: string): Promise<any> { return updateModuleApplicationStatus(id, status); }
+  async deleteApplication(id: number): Promise<void> { return deleteModuleApplication(id); }
+
+  async getOfficeConfig(): Promise<any> { return getModuleOfficeConfig(); }
+  async updateOfficeConfig(config: any): Promise<any> { return updateModuleOfficeConfig(config); }
+
+  async getTrips(): Promise<any[]> { return getModuleTrips(); }
+  async createTrip(trip: any): Promise<any> { return createModuleTrip(trip); }
+  async updateTrip(id: number, trip: any): Promise<any> { return updateModuleTrip(id, trip); }
+  async deleteTrip(id: number): Promise<void> { return deleteModuleTrip(id); }
+
+  async getTickets(): Promise<any[]> { return getModuleTickets(); }
+  async createTicket(ticket: any): Promise<any> { return createModuleTicket(ticket); }
+  async updateTicketStatus(id: number, status: string): Promise<any> { return updateModuleTicketStatus(id, status); }
+  async deleteTicket(id: number): Promise<void> { return deleteModuleTicket(id); }
+
+  async getPortalAccounts(): Promise<any[]> { return getModulePortalAccounts(); }
+  async createPortalAccount(acc: any): Promise<any> { return createModulePortalAccount(acc); }
+  async updatePortalAccount(id: number, acc: any): Promise<any> { return updateModulePortalAccount(id, acc); }
+  async deletePortalAccount(id: number): Promise<void> { return deleteModulePortalAccount(id); }
+  async authenticatePortalAccount(portalType: string, email: string, pass: string): Promise<any> { return authenticateModulePortalAccount(portalType, email, pass); }
+  async getPortalAuditLogs(): Promise<any[]> { return getModulePortalAuditLogs(); }
+  async addPortalAuditLog(entry: any): Promise<any> { return addModulePortalAuditLog(entry); }
+}
+
+// Module-level persistent state for Applications, Office, Trips, Tickets
+const applicationsList: any[] = [];
+let applicationNextId = 1;
+
+let officeConfigData: any = {
+  name: "مكتب شومة للسياحة والاستكشاف",
+  address: "مسقط، الخوير، شارع السلطان قابوس",
+  phone: "+968 91234567",
+  workingHours: "السبت - الخميس: 8:00 ص - 8:00 م",
+  mapEmbedUrl: ""
+};
+
+const tripsList: any[] = [];
+let tripNextId = 1;
+
+const ticketsList: any[] = [];
+let ticketNextId = 1;
+
+function getModuleApplications(): any[] {
+  return applicationsList;
+}
+
+function createModuleApplication(app: any): any {
+  const newApp = {
+    id: applicationNextId++,
+    fullName: app.fullName || app.name || "متقدم جديد",
+    email: app.email || "",
+    phone: app.phone || "",
+    role: app.role || "guide",
+    experience: app.experience || "",
+    status: app.status || "pending",
+    createdAt: new Date().toISOString()
+  };
+  applicationsList.push(newApp);
+  return newApp;
+}
+
+function updateModuleApplicationStatus(id: number, status: string): any {
+  const found = applicationsList.find(a => Number(a.id) === Number(id));
+  if (found) {
+    found.status = status;
+    return found;
+  }
+  return { success: false };
+}
+
+function deleteModuleApplication(id: number): void {
+  const idx = applicationsList.findIndex(a => Number(a.id) === Number(id));
+  if (idx !== -1) {
+    applicationsList.splice(idx, 1);
+  }
+}
+
+function getModuleOfficeConfig(): any {
+  return officeConfigData;
+}
+
+function updateModuleOfficeConfig(config: any): any {
+  officeConfigData = { ...officeConfigData, ...config };
+  return officeConfigData;
+}
+
+function getModuleTrips(): any[] {
+  return tripsList;
+}
+
+function createModuleTrip(trip: any): any {
+  const newTrip = {
+    id: tripNextId++,
+    title: trip.title || "جولة سياحية",
+    guide: trip.guide || "مرشد شومة",
+    date: trip.date || new Date().toISOString().split('T')[0],
+    status: trip.status || "upcoming",
+    passengers: trip.passengers || 1,
+    price: trip.price || 50,
+    location: trip.location || "مسقط"
+  };
+  tripsList.push(newTrip);
+  return newTrip;
+}
+
+function updateModuleTrip(id: number, trip: any): any {
+  const idx = tripsList.findIndex(t => Number(t.id) === Number(id));
+  if (idx !== -1) {
+    tripsList[idx] = { ...tripsList[idx], ...trip };
+    return tripsList[idx];
+  }
+  return { success: false };
+}
+
+function deleteModuleTrip(id: number): void {
+  const idx = tripsList.findIndex(t => Number(t.id) === Number(id));
+  if (idx !== -1) {
+    tripsList.splice(idx, 1);
+  }
+}
+
+function getModuleTickets(): any[] {
+  return ticketsList;
+}
+
+function createModuleTicket(ticket: any): any {
+  const newTicket = {
+    id: ticketNextId++,
+    user: ticket.user || "مستخدم",
+    subject: ticket.subject || "استفسار",
+    message: ticket.message || "",
+    priority: ticket.priority || "medium",
+    status: ticket.status || "open",
+    createdAt: new Date().toISOString()
+  };
+  ticketsList.push(newTicket);
+  return newTicket;
+}
+
+function updateModuleTicketStatus(id: number, status: string): any {
+  const found = ticketsList.find(t => Number(t.id) === Number(id));
+  if (found) {
+    found.status = status;
+    return found;
+  }
+  return { success: false };
+}
+
+function deleteModuleTicket(id: number): void {
+  const idx = ticketsList.findIndex(t => Number(t.id) === Number(id));
+  if (idx !== -1) {
+    ticketsList.splice(idx, 1);
+  }
+}
+
+// Module-level persistent state for Portal Accounts & Audit Logs
+const initialPortalAccounts: any[] = [
+  // قسم الإدارة المالية والتدقيق (Finance)
+  { id: 1, portalType: "finance", portalName: "لوحة الإدارة المالية العامة", email: "finance1@shouma.com", password: "finance2026", name: "سالم العبري - المحاسب الرئيسي", isActive: true, createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+  { id: 2, portalType: "finance", portalName: "لوحة الإدارة المالية العامة", email: "finance2@shouma.com", password: "finance2026", name: "بدرية الهنائية - مديرة التدقيق والأرباح", isActive: true, createdAt: new Date(Date.now() - 86400000 * 4).toISOString() },
+  { id: 3, portalType: "finance", portalName: "لوحة الإدارة المالية العامة", email: "finance@shouma.com", password: "finance2026", name: "المحاسب المالي العام", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم الفنادق والمنتجعات (Hotels)
+  { id: 4, portalType: "hotels", portalName: "لوحة إدارة الفنادق والمنتجعات", email: "hotel1@shouma.com", password: "hotel2026", name: "راشد الزدجالي - مدير قسم الفنادق", isActive: true, createdAt: new Date(Date.now() - 86400000 * 6).toISOString() },
+  { id: 5, portalType: "hotels", portalName: "لوحة إدارة الفنادق والمنتجعات", email: "hotel2@shouma.com", password: "hotel2026", name: "فاطمة المعمرية - مسؤول الحجوزات والمنتجعات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
+  { id: 6, portalType: "hotels", portalName: "لوحة إدارة الفنادق والمنتجعات", email: "hotel@shouma.com", password: "hotel2026", name: "مدير الفنادق والمنتجعات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم تأجير السيارات (Cars)
+  { id: 7, portalType: "cars", portalName: "لوحة إدارة مكتب تأجير السيارات", email: "cars1@shouma.com", password: "cars2026", name: "خالد السيابي - مدير مكتب السيارات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+  { id: 8, portalType: "cars", portalName: "لوحة إدارة مكتب تأجير السيارات", email: "cars2@shouma.com", password: "cars2026", name: "سلطان الوهيبي - مشرف أسطول المركبات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+  { id: 9, portalType: "cars", portalName: "لوحة إدارة مكتب تأجير السيارات", email: "cars@shouma.com", password: "cars2026", name: "مدير مكتب السيارات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم الرحلات والفعاليات (Trips)
+  { id: 10, portalType: "trips", portalName: "لوحة إدارة الرحلات الاستكشافية", email: "trips1@shouma.com", password: "trips2026", name: "حمد الحارثي - مدير الرحلات والفعاليات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 4).toISOString() },
+  { id: 11, portalType: "trips", portalName: "لوحة إدارة الرحلات الاستكشافية", email: "trips2@shouma.com", password: "trips2026", name: "أسماء البلوشية - منسق المغامرات والأنشطة", isActive: true, createdAt: new Date(Date.now() - 86400000 * 1).toISOString() },
+  { id: 12, portalType: "trips", portalName: "لوحة إدارة الرحلات الاستكشافية", email: "trips@shouma.com", password: "trips2026", name: "مدير الرحلات والفعاليات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم التسويق والإعلانات (Marketing)
+  { id: 13, portalType: "marketing", portalName: "لوحة إدارة التسويق والإعلانات", email: "marketing1@shouma.com", password: "marketing2026", name: "طارق البوسعيدي - مدير التسويق والإعلانات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 5).toISOString() },
+  { id: 14, portalType: "marketing", portalName: "لوحة إدارة التسويق والإعلانات", email: "marketing2@shouma.com", password: "marketing2026", name: "مريم الكندية - أخصائية الحملات الرقمية", isActive: true, createdAt: new Date(Date.now() - 86400000 * 2).toISOString() },
+  { id: 15, portalType: "marketing", portalName: "لوحة إدارة التسويق والإعلانات", email: "marketing@shouma.com", password: "marketing2026", name: "مسؤول التسويق والإعلانات", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم المرشدين السياحيين (Guides)
+  { id: 16, portalType: "guides", portalName: "لوحة المرشدين السياحيين", email: "guide1@shouma.com", password: "guide2026", name: "يعقوب السالمي - كبير المرشدين", isActive: true, createdAt: new Date(Date.now() - 86400000 * 3).toISOString() },
+  { id: 17, portalType: "guides", portalName: "لوحة المرشدين السياحيين", email: "guide@shouma.com", password: "guide2026", name: "مرشد سياحي معتمد", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() },
+
+  // قسم التقنية والدعم البرمجي (Tech)
+  { id: 18, portalType: "tech", portalName: "لوحة الدعم التقني والبرمجي", email: "tech1@shouma.com", password: "tech2026", name: "مازن الخروصي - مهندس الأنظمة والدعم", isActive: true, createdAt: new Date(Date.now() - 86400000 * 4).toISOString() },
+  { id: 19, portalType: "tech", portalName: "لوحة الدعم التقني والبرمجي", email: "tech@shouma.com", password: "tech2026", name: "مدير الخدمات التقنية", isActive: true, createdAt: new Date(Date.now() - 86400000 * 10).toISOString() }
+];
+let portalAccountNextId = 20;
+const portalAccountsList: any[] = [...initialPortalAccounts];
+
+const portalAuditLogsList: any[] = [
+  { id: 1, portalType: "finance", portalName: "لوحة الإدارة المالية العامة", email: "finance1@shouma.com", name: "سالم العبري - المحاسب الرئيسي", action: "LOGIN", timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(), ip: "192.168.1.10" },
+  { id: 2, portalType: "hotels", portalName: "لوحة إدارة الفنادق والمنتجعات", email: "hotel2@shouma.com", name: "فاطمة المعمرية - مسؤول الحجوزات", action: "LOGIN", timestamp: new Date(Date.now() - 1000 * 60 * 35).toISOString(), ip: "192.168.1.18" },
+  { id: 3, portalType: "hotels", portalName: "لوحة إدارة الفنادق والمنتجعات", email: "hotel1@shouma.com", name: "راشد الزدجالي - مدير قسم الفنادق", action: "LOGOUT", timestamp: new Date(Date.now() - 1000 * 60 * 90).toISOString(), ip: "192.168.1.15" },
+  { id: 4, portalType: "cars", portalName: "لوحة إدارة مكتب تأجير السيارات", email: "cars1@shouma.com", name: "خالد السيابي - مدير مكتب السيارات", action: "LOGIN", timestamp: new Date(Date.now() - 1000 * 60 * 140).toISOString(), ip: "192.168.1.22" },
+  { id: 5, portalType: "marketing", portalName: "لوحة إدارة التسويق والإعلانات", email: "marketing2@shouma.com", name: "مريم الكندية - أخصائية الحملات الرقمية", action: "LOGOUT", timestamp: new Date(Date.now() - 1000 * 60 * 200).toISOString(), ip: "192.168.1.30" },
+  { id: 6, portalType: "trips", portalName: "لوحة إدارة الرحلات الاستكشافية", email: "trips1@shouma.com", name: "حمد الحارثي - مدير الرحلات والفعاليات", action: "LOGIN", timestamp: new Date(Date.now() - 1000 * 60 * 280).toISOString(), ip: "192.168.1.44" },
+  { id: 7, portalType: "finance", portalName: "لوحة الإدارة المالية العامة", email: "finance2@shouma.com", name: "بدرية الهنائية - مديرة التدقيق والأرباح", action: "LOGOUT", timestamp: new Date(Date.now() - 1000 * 60 * 340).toISOString(), ip: "192.168.1.12" }
+];
+let portalAuditLogNextId = 8;
+
+function getModulePortalAccounts(): any[] {
+  return portalAccountsList;
+}
+
+function createModulePortalAccount(acc: any): any {
+  const newAcc = {
+    id: portalAccountNextId++,
+    portalType: acc.portalType || "hotels",
+    portalName: acc.portalName || acc.portalType || "لوحة تحكم فرعية",
+    email: (acc.email || "").trim().toLowerCase(),
+    password: acc.password || "123456",
+    name: acc.name || "مدير النظام الفرعي",
+    isActive: acc.isActive !== undefined ? Boolean(acc.isActive) : true,
+    createdAt: new Date().toISOString()
+  };
+  portalAccountsList.push(newAcc);
+  return newAcc;
+}
+
+function updateModulePortalAccount(id: number, acc: any): any {
+  const found = portalAccountsList.find(a => Number(a.id) === Number(id));
+  if (found) {
+    if (acc.portalType) found.portalType = acc.portalType;
+    if (acc.portalName) found.portalName = acc.portalName;
+    if (acc.email) found.email = acc.email.trim().toLowerCase();
+    if (acc.password) found.password = acc.password;
+    if (acc.name) found.name = acc.name;
+    if (acc.isActive !== undefined) found.isActive = Boolean(acc.isActive);
+    return found;
+  }
+  return { success: false };
+}
+
+function deleteModulePortalAccount(id: number): void {
+  const idx = portalAccountsList.findIndex(a => Number(a.id) === Number(id));
+  if (idx !== -1) {
+    portalAccountsList.splice(idx, 1);
+  }
+}
+
+function authenticateModulePortalAccount(portalType: string, email: string, pass: string): any {
+  const cleanEmail = (email || "").trim().toLowerCase();
+  const found = portalAccountsList.find(a => 
+    a.email.toLowerCase() === cleanEmail && 
+    a.password === pass && 
+    a.isActive !== false
+  );
+  if (found) {
+    return {
+      id: found.id,
+      portalType: found.portalType,
+      portalName: found.portalName,
+      email: found.email,
+      name: found.name
+    };
+  }
+  return null;
+}
+
+function getModulePortalAuditLogs(): any[] {
+  return [...portalAuditLogsList].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+}
+
+function addModulePortalAuditLog(entry: any): any {
+  const newLog = {
+    id: portalAuditLogNextId++,
+    portalType: entry.portalType || "general",
+    portalName: entry.portalName || "النظام العام",
+    email: (entry.email || "").trim().toLowerCase(),
+    name: entry.name || "مستخدم للنظام",
+    action: entry.action || "LOGIN",
+    timestamp: entry.timestamp || new Date().toISOString(),
+    ip: entry.ip || "192.168.1.1"
+  };
+  portalAuditLogsList.unshift(newLog);
+  return newLog;
 }
 
 export const storage = process.env.DATABASE_URL ? new DatabaseStorage() : new MemStorage();

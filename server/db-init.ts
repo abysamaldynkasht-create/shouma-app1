@@ -249,9 +249,70 @@ export async function initDatabaseTables() {
       await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "split_hotel_pct" integer DEFAULT 85;`);
       await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "email" text;`);
       await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "password" text;`);
-      console.log("✅ Verified hotel split gateways, email, and password columns inside 'db_hotels'!");
+      await pool.query(`ALTER TABLE "db_hotels" ADD COLUMN IF NOT EXISTS "status" text NOT NULL DEFAULT 'approved';`);
+      console.log("✅ Verified hotel split gateways, email, password, and status columns inside 'db_hotels'!");
     } catch (e) {
       console.warn("Hotel split/credentials columns already exist or alter failed:", e);
+    }
+
+    // 1.5. Create or alter users verification columns
+    try {
+      await pool.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "phone" text;`);
+      await pool.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_verified" boolean DEFAULT false;`);
+      await pool.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "verification_code" text;`);
+      await pool.query(`ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "verified_via" text;`);
+      
+      // Auto-verify all existing users to prevent lockouts
+      const updated = await pool.query(`UPDATE "users" SET "is_verified" = true WHERE "is_verified" IS NULL OR "is_verified" = false;`);
+      console.log(`✅ Verified user verification and phone columns inside 'users'! Auto-verified existing users: ${updated.rowCount}`);
+
+      // Seed default demo & admin users if missing
+      try {
+        await pool.query(`
+          INSERT INTO "users" (id, username, password, email, phone, is_verified, verified_via)
+          VALUES 
+            ('demo-user-1', 'demo', 'demo123', 'demo@shouma.om', '+96890000000', true, 'email'),
+            ('admin-user-1', 'admin', 'admin123', 'admin@shouma.om', '+96891111111', true, 'email'),
+            ('shouma-user-1', 'shouma', '123456', 'shouma@shouma.om', '+96892222222', true, 'email')
+          ON CONFLICT (id) DO NOTHING;
+        `);
+        console.log("✅ Verified default demo & admin users in 'users' table!");
+      } catch (errUserSeed) {
+        console.warn("Default user seed warning:", errUserSeed);
+      }
+
+      // Create db_portal_accounts table and seed sub-dashboard accounts
+      try {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS "db_portal_accounts" (
+            "id" serial PRIMARY KEY,
+            "portal_type" varchar(50) NOT NULL,
+            "portal_name" varchar(100) NOT NULL,
+            "email" text NOT NULL UNIQUE,
+            "password" text NOT NULL,
+            "name" text NOT NULL,
+            "is_active" boolean NOT NULL DEFAULT true,
+            "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+        `);
+        await pool.query(`
+          INSERT INTO "db_portal_accounts" ("portal_type", "portal_name", "email", "password", "name")
+          VALUES 
+            ('hotels', 'لوحة إدارة الفنادق والمنتجعات', 'hotel@shouma.com', 'hotel2026', 'مدير الفنادق والمنتجعات'),
+            ('cars', 'لوحة إدارة مكتب تأجير السيارات', 'cars@shouma.com', 'cars2026', 'مدير مكتب السيارات'),
+            ('trips', 'لوحة إدارة الرحلات الاستكشافية', 'trips@shouma.com', 'trips2026', 'مدير الرحلات والفعاليات'),
+            ('finance', 'لوحة الإدارة المالية العامة', 'finance@shouma.com', 'finance2026', 'المحاسب المالي العام'),
+            ('marketing', 'لوحة إدارة التسويق والإعلانات', 'marketing@shouma.com', 'marketing2026', 'مسؤول التسويق والإعلانات'),
+            ('tech', 'لوحة الدعم التقني والبرمجي', 'tech@shouma.com', 'tech2026', 'مدير الخدمات التقنية'),
+            ('guides', 'لوحة المرشدين السياحيين', 'guide@shouma.com', 'guide2026', 'مرشد سياحي معتمد')
+          ON CONFLICT ("email") DO NOTHING;
+        `);
+        console.log("✅ Verified and seeded 'db_portal_accounts' table!");
+      } catch (errPortalSeed) {
+        console.warn("Portal accounts table creation/seed error:", errPortalSeed);
+      }
+    } catch (e) {
+      console.warn("User verification columns alter failed:", e);
     }
 
     // 2. Create db_hiking_trips
@@ -402,6 +463,26 @@ export async function initDatabaseTables() {
       )
     `);
 
+    // Create db_finance_transactions for complete accounting system
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_finance_transactions" (
+        "id" serial PRIMARY KEY,
+        "type" text NOT NULL,
+        "category" text NOT NULL,
+        "amount" numeric NOT NULL,
+        "description" text NOT NULL,
+        "date" text NOT NULL,
+        "reference_id" text,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed default transactions if empty (Disabled to start with a clean slate)
+    const checkTx = await pool.query(`SELECT COUNT(*) FROM "db_finance_transactions"`);
+    if (parseInt(checkTx.rows[0].count, 10) === 0) {
+      console.log("🌱 Database is clean. Waiting for live transactions...");
+    }
+
     // Seed default Hiking Payments if empty
     const checkPayments = await pool.query(`SELECT COUNT(*) FROM "db_hiking_payments"`);
     if (parseInt(checkPayments.rows[0].count, 10) === 0) {
@@ -417,6 +498,269 @@ export async function initDatabaseTables() {
           VALUES ($1, true, 'تم التفعيل افتراضيا بواسطة لوحة التحكم الرئيسية')
         `, [gw]);
       }
+    }
+
+    // Create db_car_bookings
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_car_bookings" (
+        "id" serial PRIMARY KEY,
+        "car_id" text NOT NULL,
+        "car_name" text NOT NULL,
+        "full_name" text NOT NULL,
+        "phone" text NOT NULL,
+        "email" text NOT NULL,
+        "days" integer NOT NULL DEFAULT 1,
+        "price_per_day" numeric NOT NULL,
+        "total_price" numeric NOT NULL,
+        "license_url" text,
+        "id_card_url" text,
+        "status" text NOT NULL DEFAULT 'pending',
+        "payment_gateway" text NOT NULL DEFAULT 'بوابة دفع شومة الفورية',
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed default car bookings if empty (Disabled to start with a clean slate)
+    const checkCarBookings = await pool.query(`SELECT COUNT(*) FROM "db_car_bookings"`);
+    if (parseInt(checkCarBookings.rows[0].count, 10) === 0) {
+      console.log("🌱 Database is clean. Waiting for live car rental bookings...");
+    }
+
+    // Delete experimental default mock rows immediately if they are present to ensure a clean start
+    try {
+      await pool.query(`
+        DELETE FROM "db_car_bookings" 
+        WHERE email IN ('ahmed@example.om', 'sara@example.om')
+      `);
+      await pool.query(`
+        DELETE FROM "db_finance_transactions" 
+        WHERE description IN (
+          'صيانة وشراء حبال ومعدات تسلق للهايكنق', 
+          'مستحقات مرشد سياحي خارجي لرحلة جبل شمس', 
+          'حملة إعلانية ممولة للترويج للموسم السياحي', 
+          'رعاية إعلانية لفعاليات المغامرات من شريك خارجي', 
+          'اشتراك إنترنت وتجهيزات مكتبية لمقر الشركة'
+        )
+      `);
+      console.log("🧹 Cleaned up existing experimental/test default records successfully!");
+    } catch (cleanErr) {
+      console.warn("Cleanup warning (optional table records already cleared):", cleanErr);
+    }
+
+    // --- PROPERTY MANAGEMENT SYSTEM & RBAC CUSTOM TABLES ---
+    console.log("⏳ Creating Property Management System (PMS) and RBAC tables...");
+    
+    // 1. Hotel Staff
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_hotel_staff" (
+        "id" serial PRIMARY KEY,
+        "hotel_id" integer NOT NULL,
+        "username" text NOT NULL UNIQUE,
+        "password" text NOT NULL,
+        "role" text NOT NULL, -- 'manager', 'receptionist', 'accountant'
+        "name" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // 2. Hotel Rooms (Pending Approval Workflow)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_hotel_rooms" (
+        "id" serial PRIMARY KEY,
+        "hotel_id" integer NOT NULL,
+        "name" text NOT NULL,
+        "name_ar" text NOT NULL,
+        "description" text NOT NULL,
+        "price_base" numeric NOT NULL,
+        "commission_pct" integer NOT NULL DEFAULT 15, -- 5%, 10%, 15% applied by admin
+        "commission_amount" numeric DEFAULT 15,
+        "price_final" numeric NOT NULL, -- Calculated final price including commission
+        "max_guests" integer NOT NULL DEFAULT 2,
+        "amenities" text[] NOT NULL DEFAULT '{}'::text[],
+        "image" text NOT NULL DEFAULT '',
+        "status" text NOT NULL DEFAULT 'pending', -- 'pending', 'approved', 'rejected'
+        "available_rooms" integer NOT NULL DEFAULT 10,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    await pool.query(`ALTER TABLE "db_hotel_rooms" ADD COLUMN IF NOT EXISTS "commission_amount" numeric DEFAULT 15;`);
+    await pool.query(`ALTER TABLE "db_hotel_rooms" ADD COLUMN IF NOT EXISTS "available_rooms" integer NOT NULL DEFAULT 10;`);
+
+    // 3. Hotel Reviews
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_hotel_reviews" (
+        "id" serial PRIMARY KEY,
+        "hotel_id" integer NOT NULL,
+        "user_name" text NOT NULL,
+        "rating" integer NOT NULL DEFAULT 5, -- 1 to 5 stars
+        "comment" text NOT NULL,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // 4. Hotel Payouts (End of Month Settlements)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_hotel_payouts" (
+        "id" serial PRIMARY KEY,
+        "hotel_id" integer NOT NULL,
+        "month" text NOT NULL, -- e.g. '2026-07'
+        "total_revenue" numeric NOT NULL DEFAULT 0,
+        "commission_amount" numeric NOT NULL DEFAULT 0,
+        "payout_amount" numeric NOT NULL DEFAULT 0,
+        "status" text NOT NULL DEFAULT 'pending', -- 'pending', 'paid'
+        "paid_at" timestamp
+      )
+    `);
+
+    // Seed staff and reviews if empty
+    try {
+      const hotelResult = await pool.query(`SELECT id FROM "db_hotels" ORDER BY id LIMIT 5`);
+      const staffCheck = await pool.query(`SELECT COUNT(*) FROM "db_hotel_staff"`);
+      if (parseInt(staffCheck.rows[0].count, 10) === 0 && hotelResult.rows.length > 0) {
+        console.log("🌱 Seeding default hotel staff accounts for RBAC demonstration...");
+        for (const hRow of hotelResult.rows) {
+          const hid = hRow.id;
+          // Manager
+          await pool.query(`
+            INSERT INTO "db_hotel_staff" (hotel_id, username, password, role, name)
+            VALUES ($1, $2, $3, 'manager', $4)
+            ON CONFLICT (username) DO NOTHING
+          `, [hid, `manager_${hid}@shouma.com`, 'shouma2026', 'سليمان الحارثي']);
+          // Receptionist
+          await pool.query(`
+            INSERT INTO "db_hotel_staff" (hotel_id, username, password, role, name)
+            VALUES ($1, $2, $3, 'receptionist', $4)
+            ON CONFLICT (username) DO NOTHING
+          `, [hid, `receptionist_${hid}@shouma.com`, 'shouma2026', 'عزة البوسعيدية']);
+          // Accountant
+          await pool.query(`
+            INSERT INTO "db_hotel_staff" (hotel_id, username, password, role, name)
+            VALUES ($1, $2, $3, 'accountant', $4)
+            ON CONFLICT (username) DO NOTHING
+          `, [hid, `accountant_${hid}@shouma.com`, 'shouma2026', 'أحمد الريامي']);
+        }
+      }
+
+      const reviewsCheck = await pool.query(`SELECT COUNT(*) FROM "db_hotel_reviews"`);
+      if (parseInt(reviewsCheck.rows[0].count, 10) === 0 && hotelResult.rows.length > 0) {
+        console.log("🌱 Seeding default hotel reviews...");
+        for (const hRow of hotelResult.rows) {
+          const hid = hRow.id;
+          await pool.query(`
+            INSERT INTO "db_hotel_reviews" (hotel_id, user_name, rating, comment) VALUES
+            ($1, 'ماجد الشعيلي', 5, 'إقامة رائعة جداً، الضيافة العمانية حاضرة والخدمة ممتازة'),
+            ($1, 'منى الوهيبية', 4, 'الغرف نظيفة ومريحة للغاية، الإطلالة ساحرة جداً وننصح بزيارته')
+          `, [hid]);
+        }
+      }
+    } catch (seedErr) {
+      console.warn("PMS/RBAC Seeding warning:", seedErr);
+    }
+
+    // --- MARKETING & PROMOTIONAL ADS SYSTEM ---
+    console.log("⏳ Creating Marketing Ads and Splash Configuration tables...");
+    
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_marketing_ads" (
+        "id" serial PRIMARY KEY,
+        "title" text NOT NULL,
+        "title_ar" text NOT NULL,
+        "description" text NOT NULL,
+        "description_ar" text NOT NULL,
+        "image_url" text NOT NULL,
+        "link" text,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "db_splash_config" (
+        "id" serial PRIMARY KEY,
+        "title" text NOT NULL,
+        "title_ar" text NOT NULL,
+        "subtitle" text NOT NULL,
+        "subtitle_ar" text NOT NULL,
+        "background_type" text NOT NULL DEFAULT 'landscape', -- 'landscape' or 'image'
+        "background_image" text,
+        "is_active" boolean NOT NULL DEFAULT true,
+        "created_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Seed default ads if empty
+    try {
+      const adsCheck = await pool.query(`SELECT COUNT(*) FROM "db_marketing_ads"`);
+      if (parseInt(adsCheck.rows[0].count, 10) === 0) {
+        console.log("🌱 Seeding default promotional and marketing ads...");
+        await pool.query(`
+          INSERT INTO "db_marketing_ads" (title, title_ar, description, description_ar, image_url, link, is_active) VALUES
+          (
+            'Student Companies Exhibition - Injaz Oman', 
+            'معرض الشركات الطلابية - إنجاز عُمان', 
+            'March 5-7 | 7:30 PM - 12:00 AM at Oman Convention & Exhibition Centre', 
+            '٥ - ٧ مارس | ٧:٣٠ مساءً - ١٢:٠٠ صباحاً في مركز عُمان للمعارض والمؤتمرات', 
+            '/assets/image_1772574646292.png', 
+            'https://maps.app.goo.gl/2SFBSzDjqRn9sY216', 
+            true
+          ),
+          (
+            'Magical Jebel Shams Adventures', 
+            'مغامرات جبل شمس الساحرة', 
+            'Explore the high peak of Jebel Shams and enjoy the cool weather and breathtaking views.', 
+            'استكشف قمة جبل شمس الشاهقة واستمتع بالطقس البارد والإطلالات الخلابة.', 
+            'https://images.unsplash.com/photo-1544644181-1484b3fdfc62?auto=format&fit=crop&w=1200&q=80', 
+            '/hiking', 
+            true
+          ),
+          (
+            'Special SUV Rental Discount', 
+            'خصم خاص على حجز سيارات الدفع الرباعي', 
+            'Save 15% on all SUV rentals this week for a unique desert experience.', 
+            'وفر ١٥٪ على جميع حجوزات سيارات الدفع الرباعي هذا الأسبوع لتجربة برية فريدة.', 
+            'https://images.unsplash.com/photo-1533473359331-0135ef1b58bf?auto=format&fit=crop&w=1200&q=80', 
+            '/taxis', 
+            true
+          )
+        `);
+      }
+
+      const splashCheck = await pool.query(`SELECT COUNT(*) FROM "db_splash_config"`);
+      if (parseInt(splashCheck.rows[0].count, 10) === 0) {
+        console.log("🌱 Seeding default splash screen configurations...");
+        await pool.query(`
+          INSERT INTO "db_splash_config" (title, title_ar, subtitle, subtitle_ar, background_type, is_active) VALUES
+          (
+            'Welcome to Shouma', 
+            'مرحباً بكم في شومة', 
+            'Your smart integrated tour guide in the Sultanate of Oman', 
+            'دليلك السياحي الذكي المتكامل في سلطنة عُمان', 
+            'landscape', 
+            true
+          )
+        `);
+      }
+    } catch (seedErr) {
+      console.warn("Marketing/Splash Seeding warning:", seedErr);
+    }
+
+    // Create user_settings table if it doesn't exist
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS "user_settings" (
+          "id" serial PRIMARY KEY,
+          "user_id" varchar NOT NULL UNIQUE REFERENCES "users"("id") ON DELETE CASCADE,
+          "currency" varchar(3) NOT NULL DEFAULT 'OMR',
+          "gps_enabled" boolean NOT NULL DEFAULT true,
+          "distance_unit" varchar(2) NOT NULL DEFAULT 'km',
+          "booking_notifications" boolean NOT NULL DEFAULT true,
+          "promo_notifications" boolean NOT NULL DEFAULT true,
+          "updated_at" timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log("✅ Verified 'user_settings' table exists!");
+    } catch (errSettings) {
+      console.error("Error creating user_settings table:", errSettings);
     }
 
     console.log("✅ Automated shouma-explorer database verification complete!");

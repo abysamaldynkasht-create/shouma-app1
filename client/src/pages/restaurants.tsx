@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Translate } from "@/components/Translate";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
 import { 
@@ -228,7 +229,7 @@ export default function RestaurantsPage() {
                   />
                   <div className="absolute top-3 right-3">
                     <Badge className="bg-white/90 text-foreground backdrop-blur-sm">
-                      {restaurant.cuisine}
+                      <Translate text={restaurant.cuisine} />
                     </Badge>
                   </div>
                   <div className="absolute bottom-3 left-3">
@@ -239,11 +240,13 @@ export default function RestaurantsPage() {
                 </div>
                 <CardContent className="p-5">
                   <h3 className="text-xl font-bold text-foreground mb-2 group-hover:text-primary transition-colors">
-                    {restaurant.nameAr}
+                    <Translate text={restaurant.nameAr} />
                   </h3>
                   <div className="flex items-center gap-2 text-muted-foreground mb-3">
                     <MapPin className="w-4 h-4" />
-                    <span className="text-sm">{restaurant.city}، {restaurant.region}</span>
+                    <span className="text-sm">
+                      <Translate text={restaurant.city} />، <Translate text={restaurant.region} />
+                    </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1">

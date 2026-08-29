@@ -3,6 +3,8 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { tourGuides } from "@/lib/tour-guides";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useCurrency } from "@/contexts/CurrencyContext";
+import { Translate } from "@/components/Translate";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -61,6 +63,7 @@ const cityToKey: Record<string, CityKey> = {
 export default function TourGuidesPage() {
   const [, setLocation] = useLocation();
   const { t, isRTL } = useLanguage();
+  const { formatPrice } = useCurrency();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -321,7 +324,7 @@ export default function TourGuidesPage() {
 
                                 {req.status === "accepted" && guideInfo && (
                                   <Button
-                                    size="xs"
+                                    size="sm"
                                     onClick={() => handleWhatsAppContact(guideInfo.whatsapp, guideInfo.nameAr)}
                                     className="bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold h-7 px-2.5 rounded-lg flex items-center gap-1"
                                   >
@@ -471,15 +474,19 @@ export default function TourGuidesPage() {
                       <CardContent className="p-5 text-right">
                         <div className="mb-3">
                           <h3 className="text-lg font-bold text-foreground leading-tight" data-testid={`text-guide-name-${guide.id}`}>
-                            {guide.nameAr}
+                            <Translate text={guide.nameAr} />
                           </h3>
-                          <p className="text-xs text-primary font-bold mt-0.5">{guide.specializationAr}</p>
+                          <p className="text-xs text-primary font-bold mt-0.5">
+                            <Translate text={guide.specializationAr} />
+                          </p>
                         </div>
                         
                         <div className="flex items-center gap-4 text-xs text-muted-foreground mb-4">
                           <div className="flex items-center gap-1">
                             <MapPin className="w-4 h-4 text-slate-400" />
-                            <span>{guide.city}</span>
+                            <span>
+                              <Translate text={guide.city} />
+                            </span>
                           </div>
                           <div className="flex items-center gap-1">
                             <Clock className="w-4 h-4 text-slate-400" />
@@ -493,11 +500,11 @@ export default function TourGuidesPage() {
                         </div>
                         
                         <p className="text-xs text-muted-foreground line-clamp-3 mb-4 leading-relaxed">
-                          {guide.description}
+                          <Translate text={guide.description} />
                         </p>
                         
                         <div className="flex flex-wrap gap-1 mb-5">
-                          {guide.services.slice(0, 12).map((service) => (
+                          {guide.services.slice(0, 12).map((service: string) => (
                             <Badge key={service} variant="outline" className="text-[10px] py-0 px-2 text-slate-500 dark:text-slate-300">
                               {service}
                             </Badge>
@@ -506,7 +513,7 @@ export default function TourGuidesPage() {
                         
                         <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800/80 mb-4 text-xs font-medium">
                           <span className="text-slate-400">التكلفة اليومية التقديرية</span>
-                          <span className="text-lg font-black text-primary">{guide.pricePerDay} ريال عماني</span>
+                          <span className="text-lg font-black text-primary">{formatPrice(guide.pricePerDay)}</span>
                         </div>
                       </CardContent>
                     </div>

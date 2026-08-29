@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import ThemeToggle from "@/components/ThemeToggle";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
+import { useQuery } from "@tanstack/react-query";
 
 interface AccessiblePlace {
   id: string;
@@ -181,6 +182,33 @@ export default function HimamShoumaPage() {
   const { t, language, isRTL } = useLanguage();
   const isArabicLike = isRTL;
 
+  const { data: dbHimamList = [] } = useQuery<any[]>({
+    queryKey: ["/api/himam-shouma"],
+    queryFn: async () => {
+      const r = await fetch("/api/himam-shouma");
+      return r.ok ? r.json() : [];
+    }
+  });
+
+  const mappedDbHimam: AccessiblePlace[] = dbHimamList.map((d: any) => ({
+    id: `db-${d.id}`,
+    name: d.name,
+    nameEn: d.name_en || d.nameEn || d.name || "",
+    description: d.description,
+    descriptionEn: d.description_en || d.descriptionEn || d.description || "",
+    location: d.location,
+    locationEn: d.location_en || d.locationEn || d.location || "",
+    category: (d.category || "wheelchair") as any,
+    features: Array.isArray(d.features) ? d.features : [],
+    featuresEn: Array.isArray(d.features_en) ? d.features_en : (Array.isArray(d.featuresEn) ? d.featuresEn : []),
+    rating: typeof d.rating === 'string' ? parseFloat(d.rating) : (d.rating || 4.9),
+    phone: d.phone,
+    mapUrl: d.map_url || d.mapUrl,
+    fullyAccessible: d.fully_accessible !== false && d.fullyAccessible !== false
+  }));
+
+  const allPlaces = [...accessiblePlaces, ...mappedDbHimam];
+
   const BackArrow = isRTL ? ArrowRight : ArrowLeft;
 
   const getCategoryLabel = (cat: string) => {
@@ -258,7 +286,7 @@ export default function HimamShoumaPage() {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6" data-testid="grid-accessible-places">
-          {accessiblePlaces.map((place) => (
+          {allPlaces.map((place) => (
             <Card
               key={place.id}
               className="overflow-hidden border-sky-100 dark:border-gray-800 hover:shadow-lg transition-shadow duration-300"

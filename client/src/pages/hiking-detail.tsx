@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation, useParams } from "wouter";
+import { useCurrency } from "@/contexts/CurrencyContext";
 import { hikingTrips, getDifficultyAr, getDifficultyColor } from "@/lib/hiking";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -32,6 +33,8 @@ import {
   Lock
 } from "lucide-react";
 import { SiPaypal, SiApplepay, SiVisa, SiMastercard } from "react-icons/si";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { Translate } from "@/components/Translate";
 
 
 interface Gateway {
@@ -44,6 +47,7 @@ interface Gateway {
 export default function HikingDetailPage() {
   const [, setLocation] = useLocation();
   const params = useParams<{ id: string }>();
+  const { formatPrice } = useCurrency();
   
   // Core dynamic list
   const [dbTrips, setDbTrips] = useState<any[]>([]);
@@ -175,31 +179,34 @@ export default function HikingDetailPage() {
     setPaymentStep("paying");
     
     try {
+      const payload = {
+        tripId: parseInt(trip.id, 10),
+        tripName: trip.nameAr,
+        fullName: bookingForm.fullName,
+        phone: bookingForm.phone,
+        email: bookingForm.email,
+        attendees: parseInt(bookingForm.attendees, 10) || 1,
+        bookingDate: bookingForm.date,
+        paidAmount: trip.price * Number(bookingForm.attendees || 1),
+        paymentGateway: selectedGateway || "البطاقة الائتمانية",
+        cardNumber: bookingForm.cardNumber,
+        cardExpiry: bookingForm.cardExpiry,
+        cardCvv: bookingForm.cardCvv,
+        cardName: bookingForm.cardName
+      };
+
       const response = await fetch("/api/hiking-bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tripId: parseInt(trip.id, 10),
-          tripName: trip.nameAr,
-          fullName: bookingForm.fullName,
-          phone: bookingForm.phone,
-          email: bookingForm.email,
-          attendees: parseInt(bookingForm.attendees, 10) || 1,
-          bookingDate: bookingForm.date,
-          paidAmount: trip.price * Number(bookingForm.attendees || 1),
-          paymentGateway: selectedGateway || "البطاقة الائتمانية",
-          cardNumber: bookingForm.cardNumber,
-          cardExpiry: bookingForm.cardExpiry,
-          cardCvv: bookingForm.cardCvv,
-          cardName: bookingForm.cardName
-        })
+        body: JSON.stringify(payload)
       });
+
+      const data = await response.json().catch(() => ({}));
 
       if (response.ok) {
         setPaymentStep("success");
       } else {
-        const errData = await response.json().catch(() => ({}));
-        alert(errData.message || "حدث خطأ أثناء معالجة بيانات الحجز. يرجى المحاولة مرة أخرى.");
+        alert(data.message || "حدث خطأ أثناء معالجة بيانات الحجز. يرجى المحاولة مرة أخرى.");
         setPaymentStep("payment_card");
       }
     } catch (err) {
@@ -293,14 +300,14 @@ export default function HikingDetailPage() {
         <div className="absolute bottom-6 right-0 left-0">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <Badge className={`mb-3 ${getDifficultyColor(trip.difficulty)} text-sm px-3 py-1`}>
-              {getDifficultyAr(trip.difficulty)}
+              <Translate text={getDifficultyAr(trip.difficulty)} />
             </Badge>
             <h1 className="text-3xl sm:text-4xl font-bold text-white mb-2 leading-tight">
-              {trip.nameAr}
+              <Translate text={trip.nameAr} />
             </h1>
             <div className="flex items-center gap-2 text-white/90">
               <MapPin className="w-5 h-5 text-emerald-400" />
-              <span className="text-base font-medium">{trip.location}</span>
+              <span className="text-base font-medium"><Translate text={trip.location} /></span>
             </div>
           </div>
         </div>
@@ -312,9 +319,9 @@ export default function HikingDetailPage() {
           {/* Main Info */}
           <div className="lg:col-span-2 space-y-8">
             <div>
-              <h2 className="text-2xl font-bold text-foreground mb-4">تفاصيل المغامرة</h2>
+              <h2 className="text-2xl font-bold text-foreground mb-4"><Translate text="تفاصيل المغامرة" /></h2>
               <p className="text-muted-foreground leading-relaxed text-lg whitespace-pre-line">
-                {trip.description}
+                <Translate text={trip.description} />
               </p>
             </div>
 
@@ -322,45 +329,45 @@ export default function HikingDetailPage() {
               <Card className="bg-emerald-500/5 border-emerald-500/10">
                 <CardContent className="p-4 flex flex-col items-center text-center justify-center space-y-2">
                   <Clock className="w-6 h-6 text-emerald-600" />
-                  <span className="text-xs text-muted-foreground">المدة</span>
-                  <span className="font-bold text-sm text-foreground">{trip.duration}</span>
+                  <span className="text-xs text-muted-foreground"><Translate text="المدة" /></span>
+                  <span className="font-bold text-sm text-foreground"><Translate text={trip.duration} /></span>
                 </CardContent>
               </Card>
 
               <Card className="bg-emerald-500/5 border-emerald-500/10">
                 <CardContent className="p-4 flex flex-col items-center text-center justify-center space-y-2">
                   <Ruler className="w-6 h-6 text-emerald-600" />
-                  <span className="text-xs text-muted-foreground">المسافة</span>
-                  <span className="font-bold text-sm text-foreground">{trip.distance}</span>
+                  <span className="text-xs text-muted-foreground"><Translate text="المسافة" /></span>
+                  <span className="font-bold text-sm text-foreground"><Translate text={trip.distance} /></span>
                 </CardContent>
               </Card>
 
               <Card className="bg-emerald-500/5 border-emerald-500/10">
                 <CardContent className="p-4 flex flex-col items-center text-center justify-center space-y-2">
                   <Users className="w-6 h-6 text-emerald-600" />
-                  <span className="text-xs text-muted-foreground">المجموعة</span>
-                  <span className="font-bold text-sm text-foreground">مختلط / عائلات</span>
+                  <span className="text-xs text-muted-foreground"><Translate text="المجموعة" /></span>
+                  <span className="font-bold text-sm text-foreground"><Translate text="مختلط / عائلات" /></span>
                 </CardContent>
               </Card>
 
               <Card className="bg-emerald-500/5 border-emerald-500/10">
                 <CardContent className="p-4 flex flex-col items-center text-center justify-center space-y-2">
                   <Calendar className="w-6 h-6 text-emerald-600" />
-                  <span className="text-xs text-muted-foreground">التوفر</span>
-                  <span className="font-bold text-sm text-foreground">طوال العام</span>
+                  <span className="text-xs text-muted-foreground"><Translate text="التوفر" /></span>
+                  <span className="font-bold text-sm text-foreground"><Translate text="طوال العام" /></span>
                 </CardContent>
               </Card>
             </div>
 
             <div>
-              <h3 className="text-xl font-bold text-foreground mb-4">ماذا تشمل المغامرة؟</h3>
+              <h3 className="text-xl font-bold text-foreground mb-4"><Translate text="ماذا تشمل المغامرة؟" /></h3>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {trip.includes.map((incl, i) => (
+                {(trip.includes || []).map((incl: string, i: number) => (
                   <div key={i} className="flex items-center gap-2.5 bg-muted/40 p-3 rounded-lg border border-border">
                     <div className="w-6 h-6 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600">
                       <Check className="w-4 h-4" />
                     </div>
-                    <span className="text-sm font-medium text-foreground">{incl}</span>
+                    <span className="text-sm font-medium text-foreground"><Translate text={incl} /></span>
                   </div>
                 ))}
               </div>
@@ -372,7 +379,7 @@ export default function HikingDetailPage() {
             <Card className="sticky top-24 border-emerald-500/20 shadow-xl overflow-hidden">
               <div className="bg-emerald-600 text-white p-6 text-center">
                 <span className="text-sm text-emerald-100">سعر الفرد</span>
-                <div className="text-3xl font-bold">{trip.price} ر.ع</div>
+                <div className="text-3xl font-bold">{formatPrice(trip.price)}</div>
               </div>
               <CardContent className="p-6 space-y-6">
                 
@@ -453,7 +460,7 @@ export default function HikingDetailPage() {
                         <MapPin className="w-4 h-4" />
                         <span>{related.location}</span>
                       </div>
-                      <span className="font-bold text-primary">{related.price} ر.ع</span>
+                      <span className="font-bold text-primary">{formatPrice(related.price)}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -500,7 +507,7 @@ export default function HikingDetailPage() {
                 <div className="text-left">
                   <span className="text-xs text-muted-foreground block">سعر التذكرة</span>
                   <span className="font-black text-emerald-600 dark:text-emerald-400 text-sm">
-                    {trip.price} ر.ع / شخص
+                    {formatPrice(trip.price)} / شخص
                   </span>
                 </div>
               </div>
@@ -574,7 +581,7 @@ export default function HikingDetailPage() {
               </div>
 
               <Button type="submit" className="w-full h-12 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm cursor-pointer mt-2 text-center">
-                المتابعة لاختيار وسيلة الدفع ({trip.price * Number(bookingForm.attendees || 1)} ر.ع)
+                المتابعة لاختيار وسيلة الدفع ({formatPrice(trip.price * Number(bookingForm.attendees || 1))})
               </Button>
             </form>
           )}
@@ -592,7 +599,7 @@ export default function HikingDetailPage() {
                 <div className="text-left">
                   <span className="text-xs text-muted-foreground block">إجمالي المبلغ</span>
                   <span className="font-black text-emerald-600 dark:text-emerald-400 text-lg">
-                    {trip.price * Number(bookingForm.attendees || 1)} ر.ع
+                    {formatPrice(trip.price * Number(bookingForm.attendees || 1))}
                   </span>
                 </div>
               </div>
@@ -830,7 +837,7 @@ export default function HikingDetailPage() {
                 </div>
                 <div className="flex justify-between">
                   <span>المبلغ المدفوع:</span>
-                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">{trip.price * Number(bookingForm.attendees || 1)} ر.ع</span>
+                  <span className="text-emerald-600 dark:text-emerald-400 font-bold">{formatPrice(trip.price * Number(bookingForm.attendees || 1))}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>بوابة الدفع المستخدمة:</span>

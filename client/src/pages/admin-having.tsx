@@ -30,8 +30,11 @@ import {
   Building2,
   Ticket,
   CheckCircle2,
-  ShieldAlert
+  ShieldAlert,
+  Image as ImageIcon,
+  Presentation
 } from "lucide-react";
+import pptxgen from "pptxgenjs";
 import ThemeToggle from "@/components/ThemeToggle";
 import { hotels as staticHotels } from "@/lib/hotels";
 import { 
@@ -85,6 +88,8 @@ export default function AdminHavingPage() {
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
+  const [convertingImage, setConvertingImage] = useState(false);
+  const [convertedUrl, setConvertedUrl] = useState("");
 
   // Modal / Form state for Hiking Trip
   const [editingTripId, setEditingTripId] = useState<number | null>(null);
@@ -191,6 +196,46 @@ export default function AdminHavingPage() {
     } else {
       setSuccessMsg(msg);
       setTimeout(() => setSuccessMsg(""), 4000);
+    }
+  };
+
+  const handleImageToLinkUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setConvertingImage(true);
+    setConvertedUrl("");
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Data = reader.result as string;
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            fileType: "image",
+            mimeType: file.type,
+            size: file.size,
+            base64Data: base64Data
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const fullLink = window.location.origin + data.url;
+          setConvertedUrl(fullLink);
+          triggerNotify("تم تحويل الصورة بنجاح وتوليد رابط مباشر!");
+        } else {
+          triggerNotify("فشل في تحويل الصورة، يرجى المحاولة لاحقاً.", true);
+        }
+        setConvertingImage(false);
+      };
+      reader.readAsDataURL(file);
+    } catch (err) {
+      console.error(err);
+      triggerNotify("حدث خطأ أثناء رفع وتحويل الصورة.", true);
+      setConvertingImage(false);
     }
   };
 
@@ -351,16 +396,361 @@ export default function AdminHavingPage() {
     return totalHikingSales * 0.85;
   }, [totalHikingSales]);
 
+  // Generate comprehensive PPTX report for the manager
+  const handleGeneratePPTXReport = () => {
+    try {
+      const pptx = new pptxgen();
+      pptx.layout = "LAYOUT_16x9";
+
+      // Slide 1: Welcome & Cover Slide
+      const slide1 = pptx.addSlide();
+      slide1.background = { color: "0B1329" };
+
+      // Main Title
+      slide1.addText("التقرير التنفيذي الشامل لمنصة شومة للاستكشاف والهايكنج", {
+        x: 0.5,
+        y: 1.8,
+        w: 12.3,
+        h: 1.2,
+        fontSize: 30,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        bold: true,
+        align: "right"
+      } as any);
+
+      // Subtitle
+      slide1.addText("حصاد وإحصائيات رحلات المغامرات الجبلية، الحجوزات والأنشطة والتحليلات المالية والتشغيلية الكاملة لعام ٢٠٢٦", {
+        x: 0.5,
+        y: 3.0,
+        w: 12.3,
+        h: 0.8,
+        fontSize: 15,
+        fontFace: "Arial",
+        color: "94A3B8",
+        align: "right"
+      } as any);
+
+      // Metadata / Date
+      slide1.addText(`تاريخ الإصدار: ${new Date().toLocaleDateString("ar-OM")} | تم التجهيز خصيصاً لإدارة شومة ولجنة التدقيق المالي`, {
+        x: 0.5,
+        y: 5.5,
+        w: 12.3,
+        h: 0.5,
+        fontSize: 12,
+        fontFace: "Arial",
+        color: "10B981",
+        bold: true,
+        align: "right"
+      } as any);
+
+      // Slide 2: Platform Modules & Capabilities
+      const slide2 = pptx.addSlide();
+      slide2.background = { color: "0F172A" };
+
+      slide2.addText("١. الخدمات السياحية والتشغيلية المتاحة بالمنصة", {
+        x: 0.5,
+        y: 0.5,
+        w: 12.3,
+        h: 0.8,
+        fontSize: 22,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        bold: true,
+        align: "right"
+      } as any);
+
+      // Detailed text list about other modules
+      slide2.addText(
+        "تتفرع منصة شومة للاستكشاف كمنظومة سياحية شاملة ومدمجة توفر الخدمات التالية لولايات محافظة الداخلية:\n\n" +
+        "• بوابة رحلات الهايكنج الجبلية: نظام متكامل لإدراج مسارات المشي الجبلي والرحلات وتتبع مستويات الصعوبة وحجوزات المغامرين.\n" +
+        "• بوابة الفنادق وشقق الضيافة: ربط مباشر مع بيوت النزل التقليدية والفنادق بالمنطقة لتمكين الحجز الفوري والإشغال السريع.\n" +
+        "• بوابة مكتب تأجير السيارات: تتيح للمستكشفين حجز سيارات الدفع الرباعي والتاكسي لتنقلات سهلة وآمنة بالطرق الجبلية الوعرة.\n" +
+        "• الإرشاد والمواقع التفاعلية: خرائط رقمية مدمجة بالدليل لاستكشاف عيون المياه والمعالم الطبيعية بمرافقة مرشدين معتمدين.\n" +
+        "• بوابة التدقيق المحاسبي والمالي: لوحات مالية ذكية ومستقلة لكل مشغل تضمن سهولة تسوية الحسابات وصرف المستحقات بوضوح.",
+        {
+          x: 4.8,
+          y: 1.5,
+          w: 8.0,
+          h: 4.5,
+          fontSize: 13,
+          fontFace: "Arial",
+          color: "E2E8F0",
+          align: "right"
+        } as any
+      );
+
+      // Key Metrics Box (Right Column)
+      slide2.addText("أرقام وإحصائيات سريعة:", {
+        x: 0.5,
+        y: 1.5,
+        w: 3.8,
+        h: 0.4,
+        fontSize: 16,
+        fontFace: "Arial",
+        color: "F59E0B",
+        bold: true,
+        align: "right"
+      } as any);
+
+      slide2.addText(
+        `• مسارات الهايكنج النشطة: ${trips.length} مساراً متاحاً\n` +
+        `• إجمالي طلبات التسجيل والحجز: ${bookings.length} مشاركاً\n` +
+        `• القيمة الإجمالية للمبيعات: ${totalHikingSales.toFixed(3)} ر.ع\n` +
+        `• إيرادات عمولة المنصة (١٥٪): ${totalShoumaShare.toFixed(3)} ر.ع\n` +
+        `• صافي مستحقات منظمي الرحلات: ${totalGuidesShare.toFixed(3)} ر.ع\n` +
+        `• بوابات الدفع الإلكتروني: مدمجة بالكامل ومشفرة`,
+        {
+          x: 0.5,
+          y: 2.1,
+          w: 3.8,
+          h: 4.0,
+          fontSize: 13,
+          fontFace: "Arial",
+          color: "CBD5E1",
+          align: "right"
+        } as any
+      );
+
+      // Slide 3: Active Hiking Routes
+      const slide3 = pptx.addSlide();
+      slide3.background = { color: "0F172A" };
+
+      slide3.addText("٢. تفاصيل المسارات والرحلات الجبلية المدرجة", {
+        x: 0.5,
+        y: 0.5,
+        w: 12.3,
+        h: 0.8,
+        fontSize: 22,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        bold: true,
+        align: "right"
+      } as any);
+
+      const tripRows: any[] = [
+        [
+          { text: "اسم المسار / الرحلة", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "المنطقة والموقع", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "مستوى الصعوبة", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "المسافة والمدة", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "رسوم الاشتراك فردي", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } }
+        ]
+      ];
+
+      trips.slice(0, 6).forEach((t) => {
+        tripRows.push([
+          { text: t.name_ar || t.name || "", options: { color: "E2E8F0", align: "right", bold: false } },
+          { text: t.region || t.location || "", options: { color: "CBD5E1", align: "center", bold: false } },
+          { text: t.difficulty === "easy" ? "سهل" : t.difficulty === "medium" ? "متوسط" : "صعب", options: { color: "F59E0B", align: "center", bold: false } },
+          { text: `${t.distance} (${t.duration})`, options: { color: "CBD5E1", align: "center", bold: false } },
+          { text: `${t.price} ر.ع`, options: { color: "10B981", align: "center", bold: true } }
+        ]);
+      });
+
+      if (trips.length > 0) {
+        slide3.addTable(tripRows as any, {
+          x: 0.5,
+          y: 1.5,
+          w: 12.3,
+          colW: [3.5, 2.5, 1.8, 2.5, 2.0],
+          border: { pt: 1, color: "334155" },
+          fontSize: 11,
+          fontFace: "Arial"
+        } as any);
+      } else {
+        slide3.addText("لا تتوفر مسارات أو جولات جبلية نشطة مسجلة حالياً.", {
+          x: 1.0,
+          y: 3.0,
+          w: 11.3,
+          h: 1.0,
+          fontSize: 16,
+          fontFace: "Arial",
+          color: "94A3B8",
+          align: "center"
+        } as any);
+      }
+
+      // Slide 4: Bookings & Registrations
+      const slide4 = pptx.addSlide();
+      slide4.background = { color: "0F172A" };
+
+      slide4.addText("٣. كشف الحجوزات وطلبات المشاركة النشطة", {
+        x: 0.5,
+        y: 0.5,
+        w: 12.3,
+        h: 0.8,
+        fontSize: 22,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        bold: true,
+        align: "right"
+      } as any);
+
+      const bookingRows: any[] = [
+        [
+          { text: "اسم المشارك", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "الرحلة الجبلية", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "رقم الهاتف", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "عدد المقاعد", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "تاريخ الحجز", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } },
+          { text: "المبلغ المدفوع", options: { bold: true, color: "FFFFFF", fill: "1E293B", align: "center" } }
+        ]
+      ];
+
+      bookings.slice(0, 7).forEach((b) => {
+        bookingRows.push([
+          { text: b.full_name || b.fullName || "مشارك شومة", options: { color: "E2E8F0", align: "right", bold: false } },
+          { text: b.trip_name || b.tripName || "رحلة هايكنج", options: { color: "CBD5E1", align: "right", bold: false } },
+          { text: b.phone || "-", options: { color: "CBD5E1", align: "center", bold: false } },
+          { text: String(b.attendees || 1), options: { color: "CBD5E1", align: "center", bold: false } },
+          { text: b.booking_date || b.bookingDate || "-", options: { color: "CBD5E1", align: "center", bold: false } },
+          { text: `${b.paid_amount || b.paidAmount || 0} ر.ع`, options: { color: "10B981", align: "center", bold: true } }
+        ]);
+      });
+
+      if (bookings.length > 0) {
+        slide4.addTable(bookingRows as any, {
+          x: 0.5,
+          y: 1.5,
+          w: 12.3,
+          colW: [2.3, 3.2, 2.0, 1.3, 2.0, 1.5],
+          border: { pt: 1, color: "334155" },
+          fontSize: 10,
+          fontFace: "Arial"
+        } as any);
+      } else {
+        slide4.addText("لا توجد حجوزات نشطة مسجلة بالنظام حالياً.", {
+          x: 1.0,
+          y: 3.0,
+          w: 11.3,
+          h: 1.0,
+          fontSize: 16,
+          fontFace: "Arial",
+          color: "94A3B8",
+          align: "center"
+        } as any);
+      }
+
+      // Slide 5: Accounting & Financial Share Analysis
+      const slide5 = pptx.addSlide();
+      slide5.background = { color: "0B1329" };
+
+      slide5.addText("٤. التحليلات المالية وتقارير التوزيع والأرباح", {
+        x: 0.5,
+        y: 0.5,
+        w: 12.3,
+        h: 0.8,
+        fontSize: 22,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        bold: true,
+        align: "right"
+      } as any);
+
+      // Total Sales Block
+      slide5.addText("إجمالي المبيعات والاشتراكات", {
+        x: 8.7,
+        y: 1.5,
+        w: 4.0,
+        h: 0.4,
+        fontSize: 14,
+        fontFace: "Arial",
+        color: "F59E0B",
+        align: "center",
+        bold: true
+      } as any);
+      slide5.addText(`${totalHikingSales.toFixed(3)} ر.ع`, {
+        x: 8.7,
+        y: 1.9,
+        w: 4.0,
+        h: 0.8,
+        fontSize: 28,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        align: "center",
+        bold: true
+      } as any);
+
+      // Shuma Platform 15% Share Block
+      slide5.addText("عمولة شومة المستقطعة (١٥٪)", {
+        x: 4.6,
+        y: 1.5,
+        w: 4.0,
+        h: 0.4,
+        fontSize: 14,
+        fontFace: "Arial",
+        color: "10B981",
+        align: "center",
+        bold: true
+      } as any);
+      slide5.addText(`${totalShoumaShare.toFixed(3)} ر.ع`, {
+        x: 4.6,
+        y: 1.9,
+        w: 4.0,
+        h: 0.8,
+        fontSize: 28,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        align: "center",
+        bold: true
+      } as any);
+
+      // Operators Net 85% Share Block
+      slide5.addText("صافي حصة منظمي الهايكنج (٨٥٪)", {
+        x: 0.5,
+        y: 1.5,
+        w: 4.0,
+        h: 0.4,
+        fontSize: 14,
+        fontFace: "Arial",
+        color: "0EA5E9",
+        align: "center",
+        bold: true
+      } as any);
+      slide5.addText(`${totalGuidesShare.toFixed(3)} ر.ع`, {
+        x: 0.5,
+        y: 1.9,
+        w: 4.0,
+        h: 0.8,
+        fontSize: 28,
+        fontFace: "Arial",
+        color: "FFFFFF",
+        align: "center",
+        bold: true
+      } as any);
+
+      // Explanations text at bottom
+      slide5.addText(
+        "ضوابط التسوية والحوكمة المالية لمنصة شومة:\n\n" +
+        "• تسليم العوائد وتوزيع الأرباح: تحسب حصة المرشدين بنسبة ٨٥٪ لتغطية تجهيزات المسار والتأمين ومصاريف الإرشاد السياحي للمسافات البعيدة.\n" +
+        "• عمولة الدعم الفني والاستضافة: تقتطع منصة شومة نسبة ١٥٪ من كافة المعاملات الناجحة لتطوير البوابة وصيانة خوادم الدفع والخرائط الجغرافية.\n" +
+        "• شفافية التحصيل المحاسبي: تتزامن السجلات مباشرة مع كشف التدقيق العام لمنع الأخطاء البشرية وضمان نزاهة العمليات الحسابية.\n" +
+        "• التوسع المستقبلي: إمكانية إدراج الفنادق ومكاتب التأجير ضمن خطة عمولات موحدة لتنويع الإيرادات وتحقيق عوائد سنوية مستدامة.",
+        {
+          x: 0.5,
+          y: 3.2,
+          w: 12.3,
+          h: 2.2,
+          fontSize: 14,
+          fontFace: "Arial",
+          color: "94A3B8",
+          align: "right"
+        } as any
+      );
+
+      pptx.writeFile({ fileName: `تقرير_منصة_شومة_التنفيذي_${new Date().toISOString().slice(0, 10)}.pptx` });
+      triggerNotify("تم توليد وتنزيل تقرير بوربوينت التنفيذي الشامل بجهازك بنجاح!");
+    } catch (err) {
+      console.error(err);
+      triggerNotify("حدث خطأ أثناء إصدار ملف بوربوينت", true);
+    }
+  };
+
   // Financial progressive chart datasets (cumulative) representing hiking registrations
   const chartData = useMemo(() => {
     if (bookings.length === 0) {
-      return [
-        { name: "أسبوع ١", "المبيعات الكلية": 90, "حصة شومة": 13.5, "حصة المنظمين": 76.5 },
-        { name: "أسبوع ٢", "المبيعات الكلية": 210, "حصة شومة": 31.5, "حصة المنظمين": 178.5 },
-        { name: "أسبوع ٣", "المبيعات الكلية": 420, "حصة شومة": 63, "حصة المنظمين": 357 },
-        { name: "أسبوع ٤", "المبيعات الكلية": 680, "حصة شومة": 102, "حصة المنظمين": 578 },
-        { name: "أسبوع ٥", "المبيعات الكلية": 1150, "حصة شومة": 172.5, "حصة المنظمين": 977.5 }
-      ];
+      return [];
     }
     
     const sorted = [...bookings].sort((a, b) => {
@@ -475,7 +865,15 @@ export default function AdminHavingPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" className="border-slate-700 text-slate-300 hover:bg-slate-800" onClick={handleLogout}>
+            <Button 
+              size="sm" 
+              className="bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1.5 cursor-pointer" 
+              onClick={handleGeneratePPTXReport}
+            >
+              <Presentation className="w-4 h-4" />
+              تصدير تقرير بوربوينت الشامل
+            </Button>
+            <Button variant="outline" size="sm" className="border-slate-700 bg-slate-800/80 text-slate-100 hover:bg-slate-700 hover:text-white" onClick={handleLogout}>
               تسجيل الخروج
             </Button>
             <Button size="sm" className="bg-emerald-600 text-white hover:bg-emerald-500" onClick={() => setLocation("/hiking")}>
@@ -502,7 +900,7 @@ export default function AdminHavingPage() {
         )}
 
         <Tabs defaultValue="trips" className="space-y-6">
-          <TabsList className="bg-slate-900 border border-slate-800 p-1 w-full max-w-lg grid grid-cols-3">
+          <TabsList className="bg-slate-900 border border-slate-800 p-1 w-full max-w-xl grid grid-cols-4">
             <TabsTrigger value="trips" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white cursor-pointer">
               <Mountain className="w-4 h-4 ml-2" /> رحلات الهاكنق
             </TabsTrigger>
@@ -511,6 +909,9 @@ export default function AdminHavingPage() {
             </TabsTrigger>
             <TabsTrigger value="bookings" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white cursor-pointer">
               <ClipboardList className="w-4 h-4 ml-2" /> الحجوزات والطلبات
+            </TabsTrigger>
+            <TabsTrigger value="image-to-link" className="data-[state=active]:bg-emerald-600 data-[state=active]:text-white cursor-pointer">
+              <ImageIcon className="w-4 h-4 ml-2" /> تحويل الصور لروابط
             </TabsTrigger>
           </TabsList>
 
@@ -537,49 +938,49 @@ export default function AdminHavingPage() {
                           placeholder="مثال: هايكنق وادي شاب" 
                           value={tripForm.name_ar} 
                           onChange={(e) => setTripForm({...tripForm, name_ar: e.target.value})}
-                          className="bg-slate-850 border-slate-705 text-white"
+                          className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                           required
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-400">اسم الرحلة (إنجليزي)</label>
+                        <label className="text-xs font-semibold text-slate-300">اسم الرحلة (إنجليزي)</label>
                         <Input 
                           placeholder="مثال: Wadi Shab Adventure" 
                           value={tripForm.name} 
                           onChange={(e) => setTripForm({...tripForm, name: e.target.value})}
-                          className="bg-slate-850 border-slate-705 text-white"
+                          className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                           required
                         />
                       </div>
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-400">الوصف (عربي وتفاصيل المسير)</label>
+                        <label className="text-xs font-semibold text-slate-300">الوصف (عربي وتفاصيل المسير)</label>
                         <Textarea 
                           placeholder="تفاصيل المسار وعوامل الصعوبة المخصصة وميول الطبيعة..." 
                           value={tripForm.description} 
                           onChange={(e) => setTripForm({...tripForm, description: e.target.value})}
-                          className="bg-slate-850 border-slate-705 text-white min-h-[100px]"
+                          className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 min-h-[100px] focus:border-emerald-500 focus:ring-emerald-500/20"
                           required
                         />
                       </div>
                       
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">الموقع</label>
+                          <label className="text-xs font-semibold text-slate-300">الموقع</label>
                           <Input 
                             placeholder="ولاية صور" 
                             value={tripForm.location} 
                             onChange={(e) => setTripForm({...tripForm, location: e.target.value})}
-                            className="bg-slate-850 border-slate-705 text-white"
+                            className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">المنطقة / المحافظة</label>
+                          <label className="text-xs font-semibold text-slate-300">المنطقة / المحافظة</label>
                           <Input 
                             placeholder="الداخلية، ظفار، الخ" 
                             value={tripForm.region} 
                             onChange={(e) => setTripForm({...tripForm, region: e.target.value})}
-                            className="bg-slate-850 border-slate-705 text-white"
+                            className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
@@ -587,11 +988,11 @@ export default function AdminHavingPage() {
 
                       <div className="grid grid-cols-3 gap-2">
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">مستوى الصعوبة</label>
+                          <label className="text-xs font-semibold text-slate-300">مستوى الصعوبة</label>
                           <select 
                             value={tripForm.difficulty} 
                             onChange={(e) => setTripForm({...tripForm, difficulty: e.target.value})}
-                            className="w-full rounded-md bg-slate-850 border border-slate-700 text-xs p-2 text-white"
+                            className="w-full rounded-md bg-slate-950/80 border border-slate-700 text-xs p-2 text-white focus:border-emerald-500 focus:ring-emerald-500/20 outline-none"
                           >
                             <option value="easy">سهل (Easy)</option>
                             <option value="moderate">متوسط (Moderate)</option>
@@ -600,20 +1001,20 @@ export default function AdminHavingPage() {
                           </select>
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">المدة الزمنية</label>
+                          <label className="text-xs font-semibold text-slate-300">المدة الزمنية</label>
                           <Input 
                             value={tripForm.duration} 
                             onChange={(e) => setTripForm({...tripForm, duration: e.target.value})}
-                            className="bg-slate-850 border-slate-705 text-white text-xs"
+                            className="bg-slate-950/80 border-slate-700 text-white text-xs placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">المسافة</label>
+                          <label className="text-xs font-semibold text-slate-300">المسافة</label>
                           <Input 
                             value={tripForm.distance} 
                             onChange={(e) => setTripForm({...tripForm, distance: e.target.value})}
-                            className="bg-slate-850 border-slate-705 text-white text-xs"
+                            className="bg-slate-950/80 border-slate-700 text-white text-xs placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
@@ -621,36 +1022,87 @@ export default function AdminHavingPage() {
 
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">سعر الفرد (ر.ع)</label>
+                          <label className="text-xs font-semibold text-slate-300">سعر الفرد (ر.ع)</label>
                           <Input 
                             type="number" 
                             value={tripForm.price} 
                             onChange={(e) => setTripForm({...tripForm, price: Number(e.target.value)})}
-                            className="bg-slate-850 border-slate-705 text-white"
+                            className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs font-semibold text-slate-400">رقم الهاتف للدعم</label>
+                          <label className="text-xs font-semibold text-slate-300">رقم الهاتف للدعم</label>
                           <Input 
                             placeholder="+968 9xxx xxxx" 
                             value={tripForm.phone} 
                             onChange={(e) => setTripForm({...tripForm, phone: e.target.value})}
-                            className="bg-slate-850 border-slate-705 text-white text-sm"
+                            className="bg-slate-950/80 border-slate-700 text-white text-sm placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
                             required
                           />
                         </div>
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-xs font-semibold text-slate-400">رابط صورة الغلاف</label>
-                        <Input 
-                          placeholder="رابط URL للصورة" 
-                          value={tripForm.image} 
-                          onChange={(e) => setTripForm({...tripForm, image: e.target.value})}
-                          className="bg-slate-850 border-slate-705 text-white"
-                          required
-                        />
+                        <label className="text-xs font-semibold text-slate-300">رابط صورة الغلاف</label>
+                        <div className="flex gap-2">
+                          <Input 
+                            placeholder="رابط URL للصورة" 
+                            value={tripForm.image} 
+                            onChange={(e) => setTripForm({...tripForm, image: e.target.value})}
+                            className="bg-slate-950/80 border-slate-700 text-white flex-1 text-xs placeholder:text-slate-400 focus:border-emerald-500 focus:ring-emerald-500/20"
+                            required
+                          />
+                          <div className="relative">
+                            <input 
+                              type="file" 
+                              accept="image/*" 
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                setConvertingImage(true);
+                                try {
+                                  const reader = new FileReader();
+                                  reader.onloadend = async () => {
+                                    const base64Data = reader.result as string;
+                                    const res = await fetch("/api/upload", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({
+                                        filename: file.name,
+                                        fileType: "image",
+                                        mimeType: file.type,
+                                        size: file.size,
+                                        base64Data: base64Data
+                                      })
+                                    });
+
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      const fullLink = window.location.origin + data.url;
+                                      setTripForm(prev => ({ ...prev, image: fullLink }));
+                                      triggerNotify("تم رفع الصورة وتحويلها لرابط بنجاح!");
+                                    } else {
+                                      triggerNotify("فشل في رفع الصورة", true);
+                                    }
+                                    setConvertingImage(false);
+                                  };
+                                  reader.readAsDataURL(file);
+                                } catch (err) {
+                                  console.error(err);
+                                  triggerNotify("حدث خطأ أثناء رفع الصورة", true);
+                                  setConvertingImage(false);
+                                }
+                              }}
+                              disabled={convertingImage}
+                              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full z-10"
+                            />
+                            <Button type="button" size="sm" disabled={convertingImage} className="bg-amber-600 hover:bg-amber-500 text-[10px] h-9 font-bold px-2 cursor-pointer">
+                              {convertingImage ? "جاري الرفع..." : "رفع وصنع رابط"}
+                            </Button>
+                          </div>
+                        </div>
+                        <p className="text-[9px] text-slate-400">يمكنك إدخال رابط الصورة يدوياً أو الضغط على زر الرفع المباشر لتحويل الصورة إلى رابط فوراً.</p>
                       </div>
 
                       {/* Inclusions input */}
@@ -661,9 +1113,9 @@ export default function AdminHavingPage() {
                             placeholder="مثال: مرشد سياحي" 
                             value={newInclusion} 
                             onChange={(e) => setNewInclusion(e.target.value)}
-                            className="bg-slate-850 border-slate-705 text-white flex-1"
+                            className="bg-slate-950/80 border-slate-700 text-white placeholder:text-slate-400 flex-1 focus:border-emerald-500 focus:ring-emerald-500/20"
                           />
-                          <Button type="button" size="sm" onClick={addInclusion} className="bg-slate-800 hover:bg-slate-750">
+                          <Button type="button" size="sm" onClick={addInclusion} className="bg-slate-800 hover:bg-slate-700 text-white border border-slate-700">
                             اضافة
                           </Button>
                         </div>
@@ -737,10 +1189,10 @@ export default function AdminHavingPage() {
                               </div>
 
                               <div className="pt-2 border-t border-slate-800 flex gap-2 justify-end">
-                                <Button size="xs" variant="ghost" className="text-slate-300 hover:text-white" onClick={() => handleEditTripClick(trip)}>
+                                <Button size="sm" variant="ghost" className="text-slate-300 hover:text-white" onClick={() => handleEditTripClick(trip)}>
                                   <Edit className="w-4 h-4 ml-1.5" /> تعديل
                                 </Button>
-                                <Button size="xs" variant="ghost" className="text-rose-400 hover:text-rose-300" onClick={() => handleDeleteTripClick(trip.id)}>
+                                <Button size="sm" variant="ghost" className="text-rose-400 hover:text-rose-300" onClick={() => handleDeleteTripClick(trip.id)}>
                                   <Trash2 className="w-4 h-4 ml-1.5" /> حذف
                                 </Button>
                               </div>
@@ -812,6 +1264,36 @@ export default function AdminHavingPage() {
               </Card>
             </div>
 
+            {/* تهيئة البيانات وبدء صفحة جديدة */}
+            <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-5 rounded-2xl flex-wrap gap-4 font-sans text-right">
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-white">تهيئة البيانات المالية والحجوزات لبدء موسم جديد</h4>
+                <p className="text-xs text-slate-400">يمكنك مسح وتصفير كافة بيانات الحجوزات والعمليات المالية التجريبية لبدء تشغيل حقيقي نظيف.</p>
+              </div>
+              <Button 
+                variant="destructive" 
+                size="sm" 
+                onClick={async () => {
+                  if (window.confirm("هل أنت متأكد من رغبتك في مسح كافة الحجوزات والبيانات المالية وتصفير الإحصائيات تماماً لبدء موسم جديد؟ لا يمكن التراجع عن هذا الإجراء.")) {
+                    try {
+                      const res = await fetch("/api/hiking-bookings/all", { method: "DELETE" });
+                      if (res.ok) {
+                        triggerNotify("تم تهيئة وحذف كافة البيانات والاشتراكات بنجاح!");
+                        fetchBookings();
+                      } else {
+                        triggerNotify("فشل في تهيئة البيانات", true);
+                      }
+                    } catch (e) {
+                      triggerNotify("حدث خطأ أثناء الاتصال بالخادم", true);
+                    }
+                  }
+                }}
+                className="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs h-9 cursor-pointer"
+              >
+                تهيئة وتصفير اللوحة بالكامل (بدء من جديد)
+              </Button>
+            </div>
+
             {/* 2. Interactive Chart Panel (Full Width) */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               
@@ -834,36 +1316,44 @@ export default function AdminHavingPage() {
                     </div>
                   </CardHeader>
                   <CardContent className="h-[300px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart
-                        data={chartData}
-                        margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
-                      >
-                        <defs>
-                          <linearGradient id="colorSalesHiking" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#d97706" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#d97706" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorShoumaHiking" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                          </linearGradient>
-                          <linearGradient id="colorGuideHiking" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.2}/>
-                            <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                        <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
-                        <Tooltip 
-                          contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px", color: "#fff", textAlign: "right" }}
-                        />
-                        <Area type="monotone" dataKey="المبيعات الكلية" stroke="#d97706" fillOpacity={1} fill="url(#colorSalesHiking)" strokeWidth={2.5} name="إجمالي المبيعات" />
-                        <Area type="monotone" dataKey="حصة شومة" stroke="#10b981" fillOpacity={1} fill="url(#colorShoumaHiking)" strokeWidth={2} name="عمولة شومة (١٥٪)" />
-                        <Area type="monotone" dataKey="حصة الهاكنق" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorGuideHiking)" strokeWidth={2} name="صافي المشغل والمنظمين (٨٥٪)" />
-                      </AreaChart>
-                    </ResponsiveContainer>
+                    {chartData.length === 0 ? (
+                      <div className="h-full flex flex-col items-center justify-center text-slate-500 text-sm gap-2 text-center py-12">
+                        <Activity className="w-12 h-12 text-slate-700 animate-pulse mb-1" />
+                        <p className="font-bold text-slate-300">لا تتوفر إحصائيات أو عمليات حجز حالياً</p>
+                        <p className="text-xs text-slate-500 max-w-sm">تم تهيئة اللوحة بنجاح. سيتم البدء برسم المخططات البيانية وتجميع الأرباح تلقائياً بمجرد إتمام أول حجز حقيقي في التطبيق.</p>
+                      </div>
+                    ) : (
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart
+                          data={chartData}
+                          margin={{ top: 10, right: 10, left: 10, bottom: 0 }}
+                        >
+                          <defs>
+                            <linearGradient id="colorSalesHiking" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#d97706" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#d97706" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorShoumaHiking" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                            </linearGradient>
+                            <linearGradient id="colorGuideHiking" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.2}/>
+                              <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+                            </linearGradient>
+                          </defs>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                          <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} />
+                          <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} />
+                          <Tooltip 
+                            contentStyle={{ backgroundColor: "#0f172a", borderColor: "#1e293b", borderRadius: "12px", color: "#fff", textAlign: "right" }}
+                          />
+                          <Area type="monotone" dataKey="المبيعات الكلية" stroke="#d97706" fillOpacity={1} fill="url(#colorSalesHiking)" strokeWidth={2.5} name="إجمالي المبيعات" />
+                          <Area type="monotone" dataKey="حصة شومة" stroke="#10b981" fillOpacity={1} fill="url(#colorShoumaHiking)" strokeWidth={2} name="عمولة شومة (١٥٪)" />
+                          <Area type="monotone" dataKey="حصة الهاكنق" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorGuideHiking)" strokeWidth={2} name="صافي المشغل والمنظمين (٨٥٪)" />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    )}
                   </CardContent>
                 </Card>
               </div>
@@ -969,7 +1459,7 @@ export default function AdminHavingPage() {
                               {selectedTripDueAmount.toFixed(3)} ر.ع
                             </span>
                             <Button 
-                              size="xs" 
+                              size="sm" 
                               className="w-full mt-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold"
                               onClick={() => {
                                 setSuccessMsg(`تم تسوية وتحويل مستحقات الجولات بصفة كاملة بمبلغ ${selectedTripDueAmount.toFixed(3)} ر.ع لمنظمي رحلة "${selectedTripObj.name_ar}" بنجاح!`);
@@ -1209,6 +1699,87 @@ export default function AdminHavingPage() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="image-to-link">
+            <Card className="bg-slate-900 border-slate-800 text-slate-100 max-w-2xl mx-auto font-sans">
+              <CardHeader className="text-right dir-rtl">
+                <CardTitle className="text-amber-400 flex items-center gap-2">
+                  <ImageIcon className="w-5 h-5 text-amber-400" />
+                  أداة تحويل الصور إلى روابط ويب مباشرة
+                </CardTitle>
+                <CardDescription className="text-slate-400 text-xs">
+                  قم برفع أي صورة من جهازك، وسوف تقوم البوابة فوراً بتحميلها على الخادم الرئيسي وتوليد رابط ويب مباشر يمكنك نسخه واستخدامه في إضافة وتعديل الرحلات والفنادق.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6 text-right dir-rtl">
+                <div className="border-2 border-dashed border-slate-800 hover:border-amber-500/50 rounded-2xl p-8 text-center transition-all bg-slate-950/40 relative">
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleImageToLinkUpload}
+                    disabled={convertingImage}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                  />
+                  
+                  <div className="space-y-3">
+                    <div className="w-12 h-12 bg-amber-500/10 text-amber-400 rounded-full flex items-center justify-center mx-auto border border-amber-500/20">
+                      {convertingImage ? (
+                        <Loader2 className="w-6 h-6 animate-spin" />
+                      ) : (
+                        <ImageIcon className="w-6 h-6" />
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-sm font-bold text-slate-200 block">
+                        {convertingImage ? "جاري رفع وتحويل الصورة..." : "اضغط هنا لرفع الصورة أو اسحبها هنا"}
+                      </span>
+                      <span className="text-xs text-slate-500 mt-1 block">
+                        يدعم صيغ JPG, PNG, WEBP حتى حجم 5 ميجابايت
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {convertedUrl && (
+                  <div className="bg-slate-950/80 p-4 rounded-xl border border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-400 flex items-center gap-1">
+                        <Check className="w-4 h-4" /> تم توليد الرابط بنجاح!
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          navigator.clipboard.writeText(convertedUrl);
+                          triggerNotify("تم نسخ الرابط المباشر للصورة إلى الحافظة!");
+                        }}
+                        className="h-8 text-xs font-semibold rounded-lg border-slate-800 text-slate-300 hover:text-white"
+                      >
+                        نسخ الرابط
+                      </Button>
+                    </div>
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        value={convertedUrl} 
+                        readOnly 
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg text-[10px] py-2 px-3 text-left font-mono text-amber-300" 
+                        dir="ltr"
+                      />
+                    </div>
+                    <div className="flex justify-center pt-2">
+                      <img 
+                        src={convertedUrl} 
+                        alt="Preview" 
+                        className="max-h-40 rounded-lg object-contain border border-slate-800" 
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
                   </div>
                 )}
               </CardContent>

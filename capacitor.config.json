@@ -1,0 +1,17 @@
+{
+  "appId": "om.shouma.explorer",
+  "appName": "Shouma Explorer",
+  "webDir": "dist/public",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 2000,
+      "backgroundColor": "#0f172a",
+      "showSpinner": false
+    }
+  }
+}

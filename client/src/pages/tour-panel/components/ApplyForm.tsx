@@ -26,6 +26,8 @@ export default function ApplyForm({ onBackToLogin }: ApplyFormProps) {
   const [governorate, setGovernorate] = useState(GOVERNORATES[0]);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>(['العربية']);
   const [description, setDescription] = useState('');
+  const [permitUrl, setPermitUrl] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
 
   // Statuses
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -88,6 +90,7 @@ export default function ApplyForm({ onBackToLogin }: ApplyFormProps) {
       governorate,
       languages: selectedLanguages,
       description,
+      permitUrl,
       status: 'pending'
     };
 
@@ -304,8 +307,73 @@ export default function ApplyForm({ onBackToLogin }: ApplyFormProps) {
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="أنا شغوف جداً باكتشاف الطبيعة ومرافقة السياح..."
-                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
+                    className="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all text-right"
                   />
+                </div>
+
+                {/* Tour Guide Permit Attachment Field */}
+                <div className="bg-slate-900/40 p-5 rounded-2xl border border-slate-800 space-y-3 text-right">
+                  <label className="block text-sm font-semibold text-slate-300">
+                    📂 إرفاق تصريح أو رخصة المرشد السياحي <span className="text-slate-400 text-xs">(اختياري ولكن يفضل للقبول الفوري)</span>
+                  </label>
+                  <p className="text-xs text-slate-400">يرجى رفع صورة واضحة للتصريح الرسمي الصادر من وزارة التراث والسياحة بسلطنة عمان.</p>
+                  
+                  <div className="flex flex-col sm:flex-row items-center gap-4 justify-start">
+                    <div className="relative w-full sm:w-auto">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={async (e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          setIsUploading(true);
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          try {
+                            const res = await fetch('/api/upload', {
+                              method: 'POST',
+                              body: formData
+                            });
+                            if (res.ok) {
+                              const data = await res.json();
+                              setPermitUrl(data.url);
+                            } else {
+                              console.error("Upload failed");
+                            }
+                          } catch (err) {
+                            console.error(err);
+                          } finally {
+                            setIsUploading(false);
+                          }
+                        }}
+                        className="hidden"
+                        id="permit-upload-input"
+                        disabled={isUploading}
+                      />
+                      <label
+                        htmlFor="permit-upload-input"
+                        className={`inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-slate-850 hover:bg-slate-800 text-slate-200 text-xs font-bold rounded-xl cursor-pointer border border-slate-750 hover:border-slate-700 transition-all ${isUploading ? 'opacity-55 cursor-not-allowed' : ''}`}
+                      >
+                        {isUploading ? 'جاري رفع الملف...' : '📁 اختر صورة التصريح'}
+                      </label>
+                    </div>
+
+                    {permitUrl ? (
+                      <div className="flex items-center gap-3 bg-emerald-500/10 border border-emerald-500/20 px-3.5 py-1.5 rounded-xl text-xs text-emerald-400">
+                        <span>✅ تم إرفاق التصريح بنجاح!</span>
+                        <a 
+                          href={permitUrl} 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          className="underline hover:text-emerald-300 font-bold"
+                        >
+                          عرض الملف
+                        </a>
+                      </div>
+                    ) : (
+                      <span className="text-[11px] text-slate-500">لم يتم اختيار أي ملف بعد</span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Submit button */}

@@ -79,7 +79,7 @@ export default function GlowText({ programmerName, onContinue }: GlowTextProps) 
           initial={{ y: -20, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
           transition={{ delay: 0.2 }}
-          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30 rounded-full text-amber-400 text-sm font-medium mb-8 shadow-[0_0_15px_rgba(245,158,11,0.1)] animate-pulse"
+          className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30 rounded-full text-amber-400 text-sm font-medium mb-8 shadow-[0_0_15px_rgba(245,158,11,0.1)]"
         >
           <Sparkles className="w-4 h-4 text-amber-400 animate-spin" style={{ animationDuration: '6s' }} />
           <span>بوابة المرشدين السياحيين المعتمدين</span>

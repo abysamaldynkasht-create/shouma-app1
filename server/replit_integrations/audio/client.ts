@@ -1,10 +1,26 @@
 import OpenAI, { toFile } from "openai";
+import { GoogleGenAI } from "@google/genai";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
 import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
+
+const geminiApiKey = process.env.GEMINI_API_KEY;
+const ai = geminiApiKey
+  ? new GoogleGenAI({
+      apiKey: geminiApiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    })
+  : null;
+
+let geminiKeyIsInvalid = false;
+let openaiKeyIsInvalid = false;
 
 let _openai: OpenAI | null = null;
 function getOpenAIClient(): OpenAI {
@@ -199,55 +215,161 @@ export async function voiceChatStream(
 
 /**
  * Text-to-Speech: Converts text to speech verbatim.
- * Uses gpt-audio model via Replit AI Integrations.
+ * Uses gemini-3.1-flash-tts-preview with fallback to gpt-audio.
  */
 export async function textToSpeech(
   text: string,
   voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy",
   format: "wav" | "mp3" | "flac" | "opus" | "pcm16" = "wav"
 ): Promise<Buffer> {
-  const response = await getOpenAIClient().chat.completions.create({
-    model: "gpt-audio",
-    modalities: ["text", "audio"],
-    audio: { voice, format },
-    messages: [
-      { role: "system", content: "You are an assistant that performs text-to-speech." },
-      { role: "user", content: `Repeat the following text verbatim: ${text}` },
-    ],
-  });
-  const audioData = (response.choices[0]?.message as any)?.audio?.data ?? "";
-  return Buffer.from(audioData, "base64");
+  if (ai && !geminiKeyIsInvalid) {
+    try {
+      const voiceMap: Record<string, string> = {
+        alloy: "Puck",
+        echo: "Charon",
+        fable: "Kore",
+        onyx: "Fenrir",
+        nova: "Zephyr",
+        shimmer: "Kore",
+      };
+      const geminiVoice = voiceMap[voice] || "Zephyr";
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-tts-preview",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: geminiVoice },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        return Buffer.from(base64Audio, "base64");
+      }
+    } catch (e: any) {
+      console.error("Gemini textToSpeech failed, falling back to OpenAI:", e);
+      const errStr = e?.message || String(e);
+      if (errStr.includes("API key not valid") || errStr.includes("API_KEY_INVALID") || errStr.includes("400")) {
+        geminiKeyIsInvalid = true;
+      }
+    }
+  }
+
+  if (openaiKeyIsInvalid) {
+    throw new Error("TTS service is currently unavailable. No valid API keys are configured.");
+  }
+
+  try {
+    const response = await getOpenAIClient().chat.completions.create({
+      model: "gpt-audio",
+      modalities: ["text", "audio"],
+      audio: { voice, format },
+      messages: [
+        { role: "system", content: "You are an assistant that performs text-to-speech." },
+        { role: "user", content: `Repeat the following text verbatim: ${text}` },
+      ],
+    });
+    const audioData = (response.choices[0]?.message as any)?.audio?.data ?? "";
+    return Buffer.from(audioData, "base64");
+  } catch (e: any) {
+    console.error("OpenAI textToSpeech failed:", e);
+    const errStr = e?.message || String(e);
+    if (errStr.includes("Incorrect API key") || errStr.includes("401") || errStr.includes("invalid_api_key")) {
+      openaiKeyIsInvalid = true;
+    }
+    throw e;
+  }
 }
 
 /**
  * Streaming Text-to-Speech: Converts text to speech with real-time streaming.
- * Uses gpt-audio model via Replit AI Integrations.
+ * Uses gemini-3.1-flash-tts-preview with fallback to gpt-audio.
  * Note: Streaming only supports pcm16 output format.
  */
 export async function textToSpeechStream(
   text: string,
   voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy"
 ): Promise<AsyncIterable<string>> {
-  const stream = await getOpenAIClient().chat.completions.create({
-    model: "gpt-audio",
-    modalities: ["text", "audio"],
-    audio: { voice, format: "pcm16" },
-    messages: [
-      { role: "system", content: "You are an assistant that performs text-to-speech." },
-      { role: "user", content: `Repeat the following text verbatim: ${text}` },
-    ],
-    stream: true,
-  });
+  if (ai && !geminiKeyIsInvalid) {
+    try {
+      const voiceMap: Record<string, string> = {
+        alloy: "Puck",
+        echo: "Charon",
+        fable: "Kore",
+        onyx: "Fenrir",
+        nova: "Zephyr",
+        shimmer: "Kore",
+      };
+      const geminiVoice = voiceMap[voice] || "Zephyr";
 
-  return (async function* () {
-    for await (const chunk of stream) {
-      const delta = chunk.choices?.[0]?.delta as any;
-      if (!delta) continue;
-      if (delta?.audio?.data) {
-        yield delta.audio.data;
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-tts-preview",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: geminiVoice },
+            },
+          },
+        },
+      });
+
+      const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        return (async function* () {
+          // Slice the base64 string into chunks of 8000 characters
+          const chunkSize = 8000;
+          for (let i = 0; i < base64Audio.length; i += chunkSize) {
+            const chunk = base64Audio.slice(i, i + chunkSize);
+            yield chunk;
+            // Introduce a small delay to simulate streaming
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+        })();
       }
+    } catch (e: any) {
+      geminiKeyIsInvalid = true;
+      console.warn("Gemini TTS service unavailable, checking fallback options.");
     }
-  })();
+  }
+
+  const openAiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
+  if (!openAiKey || openAiKey === "dummy-key-for-start" || openaiKeyIsInvalid) {
+    throw new Error("TTS streaming service is currently unavailable. Browser local SpeechSynthesizer will be used.");
+  }
+
+  try {
+    const stream = await getOpenAIClient().chat.completions.create({
+      model: "gpt-audio",
+      modalities: ["text", "audio"],
+      audio: { voice, format: "pcm16" },
+      messages: [
+        { role: "system", content: "You are an assistant that performs text-to-speech." },
+        { role: "user", content: `Repeat the following text verbatim: ${text}` },
+      ],
+      stream: true,
+    });
+
+    return (async function* () {
+      for await (const chunk of stream) {
+        const delta = chunk.choices?.[0]?.delta as any;
+        if (!delta) continue;
+        if (delta?.audio?.data) {
+          yield delta.audio.data;
+        }
+      }
+    })();
+  } catch (e: any) {
+    openaiKeyIsInvalid = true;
+    console.warn("OpenAI TTS service unavailable.");
+    throw new Error("TTS streaming service is currently unavailable. Browser local SpeechSynthesizer will be used.");
+  }
 }
 
 /**

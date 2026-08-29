@@ -62,7 +62,7 @@ export const hikingTrips: HikingTrip[] = [
     id: "4",
     name: "Wadi Bani Khalid",
     nameAr: "وادي بني خالد",
-    description: "رحلة استرخاء وسباحة في برك وادي بني خالد الصافية. مثالي للعائلات مع مناظر طبيعية خلابة وكهوف مدهشة للاستكشاف.",
+    description: "رحلة استرخاء وسباحة في برك وادي بني خالد الصافية. ممتع للعائلات مع مناظر طبيعية خلابة وكهوف مدهشة للاستكشاف.",
     location: "وادي بني خالد",
     region: "شمال الشرقية",
     image: "https://images.unsplash.com/photo-1501555088652-021faa106b9b?q=80&w=800",

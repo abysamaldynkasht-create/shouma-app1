@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Headphones, X, Phone, Mail } from "lucide-react";
@@ -9,35 +9,22 @@ const CUSTOMER_SERVICE_EMAIL = "shomah272@gmail.com";
 
 export default function CustomerService() {
   const [isOpen, setIsOpen] = useState(false);
-  const [phone, setPhone] = useState(CUSTOMER_SERVICE_NUMBER);
-  const [email, setEmail] = useState(CUSTOMER_SERVICE_EMAIL);
-
-  useEffect(() => {
-    fetch('/api/office')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data && data.phone) {
-          setPhone(data.phone);
-        }
-      })
-      .catch(err => console.error("Error reading office phone in customer service", err));
-  }, []);
 
   const handleCall = () => {
-    window.location.href = `tel:${phone}`;
+    window.location.href = `tel:${CUSTOMER_SERVICE_NUMBER}`;
   };
 
   const handleWhatsApp = () => {
-    const cleanNumber = phone.replace("+", "");
+    const cleanNumber = CUSTOMER_SERVICE_NUMBER.replace("+", "");
     window.open(`https://wa.me/${cleanNumber}`, "_blank");
   };
 
   const handleEmail = () => {
-    window.location.href = `mailto:${email}`;
+    window.location.href = `mailto:${CUSTOMER_SERVICE_EMAIL}`;
   };
 
   return (
-    <div className="fixed bottom-24 left-4 z-50" dir="rtl">
+    <div className="fixed bottom-4 left-4 z-50" dir="rtl">
       {isOpen && (
         <Card 
           className="mb-3 w-72 shadow-xl border-card-border animate-in slide-in-from-bottom-4 duration-300"
@@ -70,7 +57,7 @@ export default function CustomerService() {
                 <Phone className="h-5 w-5 text-primary" />
                 <div className="flex flex-col items-start">
                   <span className="text-sm font-medium">اتصل بنا</span>
-                  <span className="text-xs text-muted-foreground" dir="ltr">{phone}</span>
+                  <span className="text-xs text-muted-foreground" dir="ltr">{CUSTOMER_SERVICE_NUMBER}</span>
                 </div>
               </Button>
 
@@ -82,7 +69,7 @@ export default function CustomerService() {
                 <SiWhatsapp className="h-5 w-5" />
                 <div className="flex flex-col items-start">
                   <span className="text-sm font-medium">واتساب</span>
-                  <span className="text-xs text-white/80" dir="ltr">{phone}</span>
+                  <span className="text-xs text-white/80" dir="ltr">{CUSTOMER_SERVICE_NUMBER}</span>
                 </div>
               </Button>
 
@@ -95,7 +82,7 @@ export default function CustomerService() {
                 <Mail className="h-5 w-5 text-primary" />
                 <div className="flex flex-col items-start">
                   <span className="text-sm font-medium">البريد الإلكتروني</span>
-                  <span className="text-xs text-muted-foreground">{email}</span>
+                  <span className="text-xs text-muted-foreground">{CUSTOMER_SERVICE_EMAIL}</span>
                 </div>
               </Button>
             </div>

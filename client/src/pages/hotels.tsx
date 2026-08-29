@@ -1,11 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
-import { hotels } from "@/lib/hotels";
+import { hotels, type Hotel } from "@/lib/hotels";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { useCurrency } from "@/contexts/CurrencyContext";
+import { Translate } from "@/components/Translate";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
 import { 
@@ -36,6 +38,7 @@ export default function HotelsPage() {
   const [selectedRegion, setSelectedRegion] = useState("all");
   const [dbHotels, setDbHotels] = useState<any[]>([]);
   const { t, language, isRTL } = useLanguage();
+  const { formatPrice } = useCurrency();
 
   useEffect(() => {
     fetch('/api/catalog/hotels')
@@ -64,14 +67,20 @@ export default function HotelsPage() {
       .catch(err => console.error("Error fetching db hotels", err));
   }, []);
 
-  const combinedHotels = useMemo(() => {
-    const formatted = dbHotels.map(item => ({
+  const combinedHotels: Hotel[] = useMemo(() => {
+    const formatted: Hotel[] = dbHotels.map(item => ({
       id: "db-" + item.id.toString(),
       name: item.name || '',
       nameAr: item.name_ar || item.nameAr || item.name || '',
+      nameEn: item.name_en || item.nameEn || item.name || '',
       description: item.description || '',
+      descriptionAr: item.description_ar || item.description || '',
+      descriptionEn: item.description_en || item.description || '',
+      governorate: item.region || item.governorate || 'مسقط',
       city: item.city || '',
-      region: item.region || '',
+      region: item.region || item.governorate || '',
+      locationAr: item.city || item.locationAr || '',
+      locationEn: item.region || item.locationEn || '',
       image: item.image || '',
       rating: parseFloat(item.rating) || 4.5,
       pricePerNight: Number(item.price_per_night || item.pricePerNight) || 120,
@@ -92,8 +101,9 @@ export default function HotelsPage() {
                             (hotel.description || '').includes(searchQuery) ||
                             (hotel.city || '').includes(searchQuery);
       const arabicRegion = regionArabicMap[selectedRegion];
+      const regionStr = hotel.region || hotel.governorate || '';
       const matchesRegion = selectedRegion === "all" || 
-                            (hotel.region && arabicRegion && (hotel.region.includes(arabicRegion) || arabicRegion.includes(hotel.region)));
+                            (arabicRegion && (regionStr.includes(arabicRegion) || arabicRegion.includes(regionStr)));
       return matchesSearch && matchesRegion;
     });
   }, [combinedHotels, searchQuery, selectedRegion]);
@@ -217,7 +227,7 @@ export default function HotelsPage() {
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                     <div className={`absolute top-3 flex gap-0.5 ${isRTL ? 'right-3' : 'left-3'}`}>
-                      {renderStars(hotel.stars)}
+                      {renderStars(hotel.stars || 5)}
                     </div>
                     <div className={`absolute top-3 flex items-center gap-1 bg-black/60 text-white px-2 py-1 rounded-full text-sm ${isRTL ? 'left-3' : 'right-3'}`}>
                       <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
@@ -226,25 +236,27 @@ export default function HotelsPage() {
                   </div>
                   <CardContent className="p-4">
                     <h3 className="text-lg font-bold text-foreground mb-2" data-testid={`text-hotel-name-${hotel.id}`}>
-                      {hotel.nameAr}
+                      <Translate text={hotel.nameAr} />
                     </h3>
                     <div className="flex items-center gap-1 text-muted-foreground text-sm mb-3">
                       <MapPin className="w-4 h-4" />
-                      <span>{hotel.city}، {hotel.region}</span>
+                      <span>
+                        <Translate text={hotel.city || hotel.locationAr || ""} />، <Translate text={hotel.region || hotel.governorate || ""} />
+                      </span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-2 mb-3">
-                      {hotel.description}
+                      <Translate text={hotel.description || hotel.descriptionAr || ""} />
                     </p>
                     <div className="flex flex-wrap gap-1 mb-3">
-                      {(hotel.amenities || []).slice(0, 3).map((amenity) => (
+                      {(hotel.amenities || []).slice(0, 3).map((amenity: string) => (
                         <Badge key={amenity} variant="outline" className="text-xs">
-                          {amenity}
+                          <Translate text={amenity} />
                         </Badge>
                       ))}
                     </div>
                     <div className="flex items-center justify-between pt-3 border-t border-border">
                       <span className="text-sm text-muted-foreground">{t('perNight')}</span>
-                      <span className="text-lg font-bold text-primary">{hotel.pricePerNight} {t('omr')}</span>
+                      <span className="text-lg font-bold text-primary">{formatPrice(hotel.pricePerNight)}</span>
                     </div>
                   </CardContent>
                 </Card>

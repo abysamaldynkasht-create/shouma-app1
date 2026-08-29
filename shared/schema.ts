@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, jsonb, serial, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, jsonb, serial, timestamp, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -37,14 +37,20 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   password: text("password").notNull(),
   email: text("email"),
+  phone: text("phone"),
+  isVerified: boolean("is_verified").default(false),
+  verificationCode: text("verification_code"),
+  verifiedVia: text("verified_via"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
   password: true,
   email: true,
+  phone: true,
 }).extend({
   email: z.string().email("البريد الإلكتروني غير صالح").optional().or(z.literal("")),
+  phone: z.string().optional().or(z.literal("")),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -114,6 +120,8 @@ export interface Itinerary {
   governorates: string[];
   days: ItineraryDay[];
   budgetSummary?: BudgetSummary;
+  noMatchingAccommodation?: boolean;
+  requestedAccommodation?: string;
 }
 
 export interface Category {
@@ -142,6 +150,8 @@ export interface Attraction {
   rating: string;
   lat?: number;
   lng?: number;
+  additionalImages?: string[];
+  tags?: string[] | string;
 }
 
 export interface RoomOption {
@@ -201,6 +211,10 @@ export interface Hotel {
   mapUrl?: string;
   roomOptions?: RoomOption[];
   reviews?: HotelReview[];
+  splitShoumaPct?: number;
+  splitHotelPct?: number;
+  additionalImages?: string;
+  bankAccount?: string;
 }
 
 export interface Restaurant {
@@ -208,6 +222,9 @@ export interface Restaurant {
   name: string;
   nameAr: string;
   description: string;
+  descriptionEn?: string;
+  descriptionFr?: string;
+  descriptionTr?: string;
   city: string;
   region: string;
   image: string;
@@ -216,6 +233,7 @@ export interface Restaurant {
   rating: number;
   features: string[];
   mapUrl?: string;
+  additionalImages?: string;
 }
 
 export interface Taxi {
@@ -302,3 +320,25 @@ export interface HikingTrip {
   rating: number;
   phone: string;
 }
+
+export const userSettings = pgTable("user_settings", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique().references(() => users.id, { onDelete: "cascade" }),
+  currency: varchar("currency", { length: 3 }).notNull().default("OMR"),
+  gpsEnabled: boolean("gps_enabled").notNull().default(true),
+  distanceUnit: varchar("distance_unit", { length: 2 }).notNull().default("km"),
+  bookingNotifications: boolean("booking_notifications").notNull().default(true),
+  promoNotifications: boolean("promo_notifications").notNull().default(true),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const insertUserSettingsSchema = createInsertSchema(userSettings).omit({
+  id: true,
+  updatedAt: true,
+}).extend({
+  currency: z.enum(["OMR", "USD", "AED"]).default("OMR"),
+  distanceUnit: z.enum(["km", "mi"]).default("km"),
+});
+
+export type UserSettings = typeof userSettings.$inferSelect;
+export type InsertUserSettings = z.infer<typeof insertUserSettingsSchema>;

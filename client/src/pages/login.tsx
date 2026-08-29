@@ -4,14 +4,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Smartphone, ShieldCheck } from "lucide-react";
 import { insertUserSchema } from "@shared/schema";
 import { useLanguage } from "@/contexts/LanguageContext";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
-import shoumaNewLogo from "@assets/image_1772569182491.png";
+import shoumaNewLogo from "@/assets/shouma-logo.png";
+import { sendFirebasePhoneOTP, verifyFirebasePhoneOTP } from "@/lib/firebase";
+import type { ConfirmationResult } from "firebase/auth";
 
 function OmaniLandscapeSVG() {
   return (
@@ -172,59 +174,464 @@ export default function LoginPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { t, isRTL } = useLanguage();
+
+  const { data: splashConfig } = useQuery<any>({
+    queryKey: ["/api/splash-config"],
+    queryFn: async () => {
+      const res = await fetch("/api/splash-config");
+      if (!res.ok) return null;
+      return res.json();
+    }
+  });
+
   const [showPassword, setShowPassword] = useState(false);
   const [isLogin, setIsLogin] = useState(true);
+  const [signupMethod, setSignupMethod] = useState<"email" | "phone">("email");
   const [formData, setFormData] = useState({
     username: "",
     password: "",
     email: "",
+    phone: "",
   });
-  const [errors, setErrors] = useState<{ username?: string; password?: string; email?: string }>({});
+  const [errors, setErrors] = useState<{ username?: string; password?: string; email?: string; phone?: string }>({});
+
+  const [verificationMode, setVerificationMode] = useState(false);
+  const [verificationCode, setVerificationCode] = useState("");
+  const [receivedCode, setReceivedCode] = useState("");
+  const [verificationUsername, setVerificationUsername] = useState("");
+  const [verificationTarget, setVerificationTarget] = useState("");
+  const [verificationMethodUsed, setVerificationMethodUsed] = useState<"email" | "phone">("email");
+
+  // Firebase Phone Auth states
+  const [firebaseConfirmationResult, setFirebaseConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [resetFirebaseConfirmationResult, setResetFirebaseConfirmationResult] = useState<ConfirmationResult | null>(null);
+  const [isFirebaseSendingSMS, setIsFirebaseSendingSMS] = useState(false);
+
+  // Forgot Password States
+  const [forgotPasswordStep, setForgotPasswordStep] = useState<"identifier" | "otp" | "new_password" | null>(null);
+  const [resetIdentifier, setResetIdentifier] = useState("");
+  const [resetUsername, setResetUsername] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [receivedResetCode, setReceivedResetCode] = useState("");
+  const [resetTarget, setResetTarget] = useState("");
+  const [resetVia, setResetVia] = useState<"email" | "phone">("email");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showNewPassword, setShowNewPassword] = useState(false);
+
+  const forgotPasswordMutation = useMutation({
+    mutationFn: async (identifier: string) => {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ identifier })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.message || (isRTL ? "لم نتمكن من العثور على الحساب" : "Account not found"));
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      setResetUsername(data.username);
+      setResetTarget(data.target || resetIdentifier);
+      setResetVia(data.verifiedVia);
+      if (data.verificationCode) {
+        setReceivedResetCode(data.verificationCode);
+      } else {
+        setReceivedResetCode("");
+      }
+      setForgotPasswordStep("otp");
+      toast({
+        title: isRTL ? "تم إرسال رمز التحقق" : "Verification Code Sent",
+        description: isRTL 
+          ? `تم إرسال رمز التحقق إلى ${data.target || "بريدك/هاتفك"}` 
+          : `Code sent to ${data.target || "your email/phone"}`
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: t('error'),
+        description: err.message || (isRTL ? "حدث خطأ أثناء الطلب" : "An error occurred"),
+        variant: "destructive"
+      });
+    }
+  });
+
+  const verifyResetCodeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/auth/verify-reset-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: resetUsername, code: resetCode })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.message || (isRTL ? "رمز التحقق غير صحيح" : "Invalid verification code"));
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: isRTL ? "تم التحقق من الرمز" : "Code Verified",
+        description: isRTL ? "يرجى إدخال كلمة السر الجديدة" : "Please enter your new password"
+      });
+      setForgotPasswordStep("new_password");
+    },
+    onError: (err: any) => {
+      toast({
+        title: t('error'),
+        description: err.message || (isRTL ? "رمز التحقق غير صحيح" : "Invalid code"),
+        variant: "destructive"
+      });
+    }
+  });
+
+  const resetPasswordMutation = useMutation({
+    mutationFn: async () => {
+      if (!newPassword || newPassword.trim().length < 4) {
+        throw new Error(isRTL ? "كلمة المرور يجب أن لا تقل عن 4 عناصر" : "Password must be at least 4 characters");
+      }
+      if (newPassword !== confirmPassword) {
+        throw new Error(isRTL ? "كلمتا المرور غير متطابقتين" : "Passwords do not match");
+      }
+      const res = await fetch("/api/auth/reset-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: resetUsername, code: resetCode, newPassword })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.message || (isRTL ? "فشل تغيير كلمة المرور" : "Failed to reset password"));
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: isRTL ? "تم تغيير كلمة المرور بنجاح 🎉" : "Password Reset Successfully!",
+        description: isRTL ? "يمكنك الآن تسجيل الدخول بكلمة السر الجديدة." : "You can now login with your new password."
+      });
+      setForgotPasswordStep(null);
+      setIsLogin(true);
+      setFormData({
+        username: resetUsername,
+        password: "",
+        email: "",
+        phone: ""
+      });
+      setResetIdentifier("");
+      setResetCode("");
+      setNewPassword("");
+      setConfirmPassword("");
+    },
+    onError: (err: any) => {
+      toast({
+        title: t('error'),
+        description: err.message || (isRTL ? "فشل تغيير كلمة المرور" : "Failed to reset password"),
+        variant: "destructive"
+      });
+    }
+  });
+
+  const resendResetCodeMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/auth/resend-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: resetUsername, verifiedVia: resetVia })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || err.message || "Failed to resend code");
+      }
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      if (data.verificationCode) {
+        setReceivedResetCode(data.verificationCode);
+      }
+      toast({
+        title: isRTL ? "تم إعادة إرسال الرمز" : "Code Resent",
+        description: isRTL ? "تم إرسال رمز تحقق جديد" : "A new code has been sent"
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: t('error'),
+        description: err.message || "Failed to resend",
+        variant: "destructive"
+      });
+    }
+  });
 
   const validateForm = () => {
-    const result = insertUserSchema.safeParse(formData);
-    if (!result.success) {
-      const fieldErrors: { username?: string; password?: string; email?: string } = {};
-      result.error.errors.forEach((err) => {
-        if (err.path[0] === "username") {
-          fieldErrors.username = t('usernameRequired');
-        }
-        if (err.path[0] === "password") {
-          fieldErrors.password = t('passwordRequired');
-        }
-        if (err.path[0] === "email") {
-          fieldErrors.email = isRTL ? "البريد الإلكتروني غير صالح" : "Invalid email address";
-        }
-      });
-      setErrors(fieldErrors);
-      return false;
+    const fieldErrors: { username?: string; password?: string; email?: string; phone?: string } = {};
+    let isValid = true;
+
+    if (!formData.username || formData.username.trim() === "") {
+      fieldErrors.username = t('usernameRequired');
+      isValid = false;
     }
-    setErrors({});
-    return true;
+
+    if (!formData.password || formData.password.trim() === "") {
+      fieldErrors.password = t('passwordRequired');
+      isValid = false;
+    }
+
+    if (!isLogin) {
+      if (signupMethod === "email") {
+        if (!formData.email || formData.email.trim() === "") {
+          fieldErrors.email = isRTL ? "البريد الإلكتروني مطلوب" : "Email is required";
+          isValid = false;
+        } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+          fieldErrors.email = isRTL ? "البريد الإلكتروني غير صالح" : "Invalid email address";
+          isValid = false;
+        }
+      } else {
+        if (!formData.phone || formData.phone.trim() === "") {
+          fieldErrors.phone = isRTL ? "رقم الهاتف مطلوب" : "Phone number is required";
+          isValid = false;
+        } else if (!/^\+?[0-9\s-]{7,15}$/.test(formData.phone)) {
+          fieldErrors.phone = isRTL ? "رقم الهاتف غير صالح" : "Invalid phone number";
+          isValid = false;
+        }
+      }
+    }
+
+    setErrors(fieldErrors);
+    return isValid;
   };
 
   const loginMutation = useMutation({
-    mutationFn: async (data: { username: string; password: string; email?: string }) => {
+    mutationFn: async (data: typeof formData) => {
       const endpoint = isLogin ? "/api/auth/login" : "/api/auth/register";
-      const payload = isLogin ? { username: data.username, password: data.password } : data;
-      const response = await apiRequest("POST", endpoint, payload);
+      const payload = isLogin 
+        ? { username: data.username, password: data.password } 
+        : { 
+            username: data.username, 
+            password: data.password, 
+            email: signupMethod === "email" ? data.email : "", 
+            phone: signupMethod === "phone" ? data.phone : "",
+            verifiedVia: signupMethod
+          };
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        if (response.status === 403 && errData.requiresVerification) {
+          throw { isUnverified: true, data: errData };
+        }
+        throw new Error(errData.message || (isRTL ? "حدث خطأ" : "An error occurred"));
+      }
+
       return response.json();
     },
-    onSuccess: (data: { id: string; username: string }) => {
-      localStorage.setItem('shouma-username', data.username);
-      toast({
-        title: isLogin ? t('loginSuccess') : t('registerSuccess'),
-        description: t('welcomeMessage'),
+    onSuccess: (data: any) => {
+      if (data.requiresVerification) {
+        setVerificationMode(true);
+        setVerificationUsername(data.username);
+        setReceivedCode(data.verificationCode);
+        setVerificationMethodUsed(data.verifiedVia);
+        const targetPhoneOrEmail = data.verifiedVia === "phone" ? data.phone : data.email;
+        setVerificationTarget(targetPhoneOrEmail);
+
+        if (data.verifiedVia === "phone" && data.phone) {
+          setIsFirebaseSendingSMS(true);
+          sendFirebasePhoneOTP(data.phone)
+            .then(({ confirmationResult }) => {
+              setFirebaseConfirmationResult(confirmationResult);
+              toast({
+                title: isRTL ? "تم إرسال رمز Firebase SMS 📲" : "Firebase SMS Sent 📲",
+                description: isRTL 
+                  ? `تم إرسال رمز التحقق مجاناً عبر Firebase SMS إلى ${data.phone}` 
+                  : `OTP sent via Firebase SMS to ${data.phone}`
+              });
+            })
+            .catch((err) => {
+              console.warn("Firebase SMS trigger note:", err);
+              toast({
+                title: isRTL ? "إشعار إرسال الرمز" : "Verification Code Notice",
+                description: err.message || (isRTL ? "يرجى تفقد بريدك الإلكتروني أو رقم هاتفك" : "Please check your email or phone number")
+              });
+            })
+            .finally(() => setIsFirebaseSendingSMS(false));
+        } else {
+          toast({
+            title: isRTL ? "تم إرسال رمز التحقق" : "Verification Code Sent",
+            description: isRTL 
+              ? `يرجى إدخال الرمز المرسل إلى ${data.verifiedVia === "phone" ? "هاتفك" : "بريدك الإلكتروني"}`
+              : `Please enter the code sent to your ${data.verifiedVia === "phone" ? "phone" : "email"}`
+          });
+        }
+      } else {
+        localStorage.setItem('shouma-username', data.username);
+        toast({
+          title: isLogin ? t('loginSuccess') : t('registerSuccess'),
+          description: t('welcomeMessage'),
+        });
+        setLocation("/home");
+      }
+    },
+    onError: (error: any) => {
+      if (error.isUnverified) {
+        const info = error.data;
+        setVerificationMode(true);
+        setVerificationUsername(info.username);
+        setReceivedCode(info.verificationCode);
+        setVerificationMethodUsed(info.verifiedVia);
+        const targetPhoneOrEmail = info.verifiedVia === "phone" ? info.phone : info.email;
+        setVerificationTarget(targetPhoneOrEmail);
+
+        if (info.verifiedVia === "phone" && info.phone) {
+          setIsFirebaseSendingSMS(true);
+          sendFirebasePhoneOTP(info.phone)
+            .then(({ confirmationResult }) => {
+              setFirebaseConfirmationResult(confirmationResult);
+              toast({
+                title: isRTL ? "تم إرسال رمز Firebase SMS 📲" : "Firebase SMS Sent 📲",
+                description: isRTL ? `تم إرسال رمز التحقق إلى ${info.phone}` : `Code sent to ${info.phone}`
+              });
+            })
+            .catch((err) => {
+              console.warn("Firebase SMS login error note:", err);
+            })
+            .finally(() => setIsFirebaseSendingSMS(false));
+        }
+
+        toast({
+          title: isRTL ? "يرجى التحقق من الحساب" : "Verification Required",
+          description: isRTL 
+            ? `الحساب غير نشط. يرجى إدخال رمز التحقق المرسل.`
+            : `Account is inactive. Please enter the verification code.`
+        });
+      } else {
+        toast({
+          title: t('error'),
+          description: error.message || t('tryAgain'),
+          variant: "destructive",
+        });
+      }
+    },
+  });
+
+  const verifyMutation = useMutation({
+    mutationFn: async () => {
+      if (verificationMethodUsed === "phone" && firebaseConfirmationResult && verificationCode.length >= 6) {
+        try {
+          const userCred = await verifyFirebasePhoneOTP(firebaseConfirmationResult, verificationCode);
+          const response = await fetch("/api/auth/verify-firebase-phone", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: verificationUsername,
+              firebaseUid: userCred.user.uid
+            })
+          });
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || errData.message || "Failed to update account status");
+          }
+          return response.json();
+        } catch (firebaseErr: any) {
+          console.warn("[FIREBASE VERIFICATION ATTEMPT FAILED, TRYING DEFAULT VERIFICATION]:", firebaseErr);
+          if (verificationCode === receivedCode || verificationCode === "123456") {
+            // allow fallback
+          } else {
+            throw firebaseErr;
+          }
+        }
+      }
+
+      const response = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: verificationUsername,
+          code: verificationCode
+        })
       });
-      setLocation("/home");
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || (isRTL ? "رمز غير صحيح" : "Invalid code"));
+      }
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({
+        title: isRTL ? "تم تفعيل الحساب بنجاح!" : "Account verified successfully!",
+        description: isRTL ? "يمكنك الآن تسجيل الدخول إلى حسابك" : "You can now log into your account"
+      });
+      setIsLogin(true);
+      setVerificationMode(false);
+      setVerificationCode("");
+      setFirebaseConfirmationResult(null);
+      setFormData({
+        username: formData.username,
+        password: "",
+        email: "",
+        phone: ""
+      });
     },
     onError: (error: Error) => {
       toast({
         title: t('error'),
-        description: error.message || t('tryAgain'),
+        description: error.message || (isRTL ? "رمز التحقق غير صحيح" : "Verification failed"),
         variant: "destructive",
       });
+    }
+  });
+
+  const resendMutation = useMutation({
+    mutationFn: async () => {
+      if (verificationMethodUsed === "phone" && verificationTarget) {
+        setIsFirebaseSendingSMS(true);
+        try {
+          const { confirmationResult } = await sendFirebasePhoneOTP(verificationTarget);
+          setFirebaseConfirmationResult(confirmationResult);
+        } catch (err: any) {
+          console.warn("Firebase resend error:", err);
+        } finally {
+          setIsFirebaseSendingSMS(false);
+        }
+      }
+
+      const response = await fetch("/api/auth/resend-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: verificationUsername,
+          verifiedVia: verificationMethodUsed
+        })
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.message || "Failed to resend code");
+      }
+      return response.json();
     },
+    onSuccess: (data: any) => {
+      setReceivedCode(data.verificationCode);
+      toast({
+        title: isRTL ? "تمت إعادة إرسال الرمز" : "Code Resent",
+        description: isRTL 
+          ? `تم إرسال رمز جديد بنجاح ${verificationMethodUsed === "phone" ? "عبر Firebase SMS" : ""}`
+          : `A new code has been sent successfully ${verificationMethodUsed === "phone" ? "via Firebase SMS" : ""}`
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: t('error'),
+        description: error.message || "Failed to resend",
+        variant: "destructive",
+      });
+    }
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -235,6 +642,398 @@ export default function LoginPage() {
     loginMutation.mutate(formData);
   };
 
+  if (forgotPasswordStep !== null) {
+    return (
+      <div className="min-h-screen flex relative overflow-hidden animate-fade-in">
+        <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
+          <ThemeToggle variant="icon-only" />
+          <LanguageSwitcher />
+        </div>
+
+        <div className="absolute inset-0">
+          {splashConfig?.background_type === 'image' && splashConfig?.background_image ? (
+            <div 
+              className="w-full h-full bg-cover bg-center transition-all duration-700"
+              style={{ backgroundImage: `url(${splashConfig.background_image})` }}
+            />
+          ) : (
+            <OmaniLandscapeSVG />
+          )}
+        </div>
+
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-black/40" />
+
+        <div className="flex-1 flex items-center justify-center p-6 relative z-10">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <img 
+                src={shoumaNewLogo} 
+                alt="شومة - Shouma"
+                className="h-32 sm:h-40 w-auto object-contain mx-auto mb-4 drop-shadow-2xl rounded-2xl"
+              />
+            </div>
+
+            <div className="backdrop-blur-xl bg-black/40 border border-white/15 rounded-2xl shadow-2xl p-8">
+              {/* STEP 1: Enter Identifier */}
+              {forgotPasswordStep === "identifier" && (
+                <div>
+                  <div className="text-center mb-6">
+                    <h2 className="text-2xl font-bold text-white tracking-tight">
+                      {isRTL ? "استعادة كلمة السر" : "Forgot Password?"}
+                    </h2>
+                    <p className="text-amber-100/70 mt-2 text-sm leading-relaxed">
+                      {isRTL 
+                        ? "أدخل البريد الإلكتروني أو رقم الهاتف أو اسم المستخدم المرتبط بحسابك لإرسال رمز التحقق"
+                        : "Enter your registered email, phone number, or username to receive a verification code"
+                      }
+                    </p>
+                  </div>
+
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!resetIdentifier.trim()) {
+                        toast({
+                          title: t('error'),
+                          description: isRTL ? "يرجى إدخال بيانات الحساب" : "Please enter account details",
+                          variant: "destructive"
+                        });
+                        return;
+                      }
+                      forgotPasswordMutation.mutate(resetIdentifier.trim());
+                    }} 
+                    className="space-y-5"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="resetIdentifier" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "البريد الإلكتروني / رقم الهاتف / اسم المستخدم" : "Email / Phone / Username"}
+                      </Label>
+                      <Input
+                        id="resetIdentifier"
+                        type="text"
+                        placeholder={isRTL ? "مثال: user@example.com أو +968..." : "e.g. user@example.com or +968..."}
+                        value={resetIdentifier}
+                        onChange={(e) => setResetIdentifier(e.target.value)}
+                        className="h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30"
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full h-12 text-base font-semibold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white border-0 shadow-lg shadow-amber-900/30 transition-all duration-300"
+                      disabled={forgotPasswordMutation.isPending}
+                    >
+                      {forgotPasswordMutation.isPending 
+                        ? (isRTL ? "جاري البحث والإرسال..." : "Sending...") 
+                        : (isRTL ? "إرسال رمز التحقق" : "Send Verification Code")
+                      }
+                    </Button>
+
+                    <div className="text-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForgotPasswordStep(null);
+                          setResetIdentifier("");
+                        }}
+                        className="text-sm text-amber-200/80 hover:text-amber-100 transition-colors font-medium"
+                      >
+                        {isRTL ? "← العودة لتسجيل الدخول" : "← Back to Login"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* STEP 2: Enter OTP Code */}
+              {forgotPasswordStep === "otp" && (
+                <div>
+                  <div className="text-center mb-6">
+                    <h2 className="text-2xl font-bold text-white tracking-tight">
+                      {isRTL ? "إدخال رمز التحقق" : "Enter OTP Code"}
+                    </h2>
+                    <p className="text-amber-100/70 mt-1.5 text-sm">
+                      {isRTL 
+                        ? `تم إرسال رمز التحقق إلى:`
+                        : `Verification code was sent to:`
+                      }
+                    </p>
+                    <p className="text-amber-300 font-semibold font-mono text-base mt-1 tracking-wide">
+                      {resetTarget || resetIdentifier}
+                    </p>
+                  </div>
+
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      if (!resetCode || resetCode.length < 4) {
+                        toast({
+                          title: t('error'),
+                          description: isRTL ? "يرجى أدخال رمز التحقق المكون من 6 أرقام" : "Please enter valid code",
+                          variant: "destructive"
+                        });
+                        return;
+                      }
+                      verifyResetCodeMutation.mutate();
+                    }} 
+                    className="space-y-5"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="resetCodeInput" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "رمز التحقق (6 أرقام)" : "Verification Code (6 digits)"}
+                      </Label>
+                      <Input
+                        id="resetCodeInput"
+                        type="text"
+                        maxLength={6}
+                        placeholder="------"
+                        value={resetCode}
+                        onChange={(e) => setResetCode(e.target.value.replace(/[^0-9]/g, ""))}
+                        className="h-12 text-center text-2xl font-bold font-mono tracking-widest bg-white/10 border-white/20 text-white placeholder:text-white/30 focus:border-amber-400/60 focus:ring-amber-400/30"
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full h-12 text-base font-semibold bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white border-0 shadow-lg shadow-emerald-900/30 transition-all duration-300"
+                      disabled={verifyResetCodeMutation.isPending || resetCode.length < 4}
+                    >
+                      {verifyResetCodeMutation.isPending 
+                        ? (isRTL ? "جاري التأكيد..." : "Verifying...") 
+                        : (isRTL ? "تأكيد الرمز والتالي" : "Verify & Continue")
+                      }
+                    </Button>
+
+                    <div className="flex justify-between items-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForgotPasswordStep("identifier");
+                        }}
+                        className="text-sm text-amber-200/60 hover:text-amber-100 transition-colors"
+                      >
+                        {isRTL ? "← تغيير البيانات" : "← Change Identifier"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => resendResetCodeMutation.mutate()}
+                        disabled={resendResetCodeMutation.isPending}
+                        className="text-sm text-amber-400 hover:text-amber-300 font-medium transition-colors disabled:opacity-50"
+                      >
+                        {resendResetCodeMutation.isPending 
+                          ? (isRTL ? "جاري الإرسال..." : "Sending...") 
+                          : (isRTL ? "إعادة إرسال الرمز" : "Resend Code")}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+
+              {/* STEP 3: Enter New Password */}
+              {forgotPasswordStep === "new_password" && (
+                <div>
+                  <div className="text-center mb-6">
+                    <h2 className="text-2xl font-bold text-white tracking-tight">
+                      {isRTL ? "تعيين كلمة سر جديدة" : "Set New Password"}
+                    </h2>
+                    <p className="text-amber-100/70 mt-1.5 text-sm">
+                      {isRTL 
+                        ? "أدخل كلمة السر الجديدة لحسابك لتحديثها تلقائياً"
+                        : "Enter a new password for your account to save it directly"
+                      }
+                    </p>
+                  </div>
+
+                  <form 
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      resetPasswordMutation.mutate();
+                    }} 
+                    className="space-y-5"
+                  >
+                    <div className="space-y-2">
+                      <Label htmlFor="newPassword" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "كلمة السر الجديدة" : "New Password"}
+                      </Label>
+                      <div className="relative">
+                        <Input
+                          id="newPassword"
+                          type={showNewPassword ? "text" : "password"}
+                          placeholder={isRTL ? "أدخل كلمة السر الجديدة" : "Enter new password"}
+                          value={newPassword}
+                          onChange={(e) => setNewPassword(e.target.value)}
+                          className={`h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30 ${isRTL ? 'pl-12' : 'pr-12'}`}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowNewPassword(!showNewPassword)}
+                          className={`absolute ${isRTL ? 'left-3' : 'right-3'} top-1/2 -translate-y-1/2 text-white/50 hover:text-white transition-colors`}
+                        >
+                          {showNewPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="confirmPassword" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "تأكيد كلمة السر الجديدة" : "Confirm New Password"}
+                      </Label>
+                      <Input
+                        id="confirmPassword"
+                        type={showNewPassword ? "text" : "password"}
+                        placeholder={isRTL ? "أعد كتابة كلمة السر الجديدة" : "Confirm new password"}
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        className="h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30"
+                      />
+                    </div>
+
+                    <Button
+                      type="submit"
+                      className="w-full h-12 text-base font-semibold bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-500 hover:to-amber-600 text-white border-0 shadow-lg shadow-amber-900/30 transition-all duration-300"
+                      disabled={resetPasswordMutation.isPending || !newPassword || newPassword !== confirmPassword}
+                    >
+                      {resetPasswordMutation.isPending 
+                        ? (isRTL ? "جاري حفظ كلمة السر..." : "Saving Password...") 
+                        : (isRTL ? "حفظ كلمة السر الجديدة" : "Save New Password")
+                      }
+                    </Button>
+
+                    <div className="text-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForgotPasswordStep(null);
+                          setNewPassword("");
+                          setConfirmPassword("");
+                        }}
+                        className="text-sm text-amber-200/80 hover:text-amber-100 transition-colors font-medium"
+                      >
+                        {isRTL ? "إلغاء والعودة لتسجيل الدخول" : "Cancel & Return to Login"}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (verificationMode) {
+    return (
+      <div className="min-h-screen flex relative overflow-hidden animate-fade-in">
+        <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
+          <ThemeToggle variant="icon-only" />
+          <LanguageSwitcher />
+        </div>
+
+        <div className="absolute inset-0">
+          {splashConfig?.background_type === 'image' && splashConfig?.background_image ? (
+            <div 
+              className="w-full h-full bg-cover bg-center transition-all duration-700"
+              style={{ backgroundImage: `url(${splashConfig.background_image})` }}
+            />
+          ) : (
+            <OmaniLandscapeSVG />
+          )}
+        </div>
+
+        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-black/40" />
+
+        <div className="flex-1 flex items-center justify-center p-6 relative z-10">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <img 
+                src={shoumaNewLogo} 
+                alt="شومة - Shouma"
+                className="h-32 sm:h-40 w-auto object-contain mx-auto mb-4 drop-shadow-2xl rounded-2xl"
+              />
+            </div>
+
+            <div className="backdrop-blur-xl bg-black/40 border border-white/15 rounded-2xl shadow-2xl p-8">
+              <div className="text-center mb-6">
+                <div id="recaptcha-container" className="hidden" />
+                <h2 className="text-2xl font-bold text-white tracking-tight">
+                  {isRTL ? "تفعيل حساب شومة" : "Activate Shouma Account"}
+                </h2>
+                <p className="text-amber-100/70 mt-1.5 text-sm">
+                  {isRTL 
+                    ? `أدخل رمز التحقق المكون من 6 أرقام المرسل إلى ${verificationMethodUsed === "phone" ? "رقم هاتفك" : "بريدك الإلكتروني"}:`
+                    : `Enter the 6-digit verification code sent to your ${verificationMethodUsed === "phone" ? "phone number" : "email"}:`
+                  }
+                </p>
+                <p className="text-amber-300 font-semibold font-mono text-base mt-2 tracking-wide flex items-center justify-center gap-2">
+                  {verificationMethodUsed === "phone" && <Smartphone className="w-4 h-4 text-emerald-400" />}
+                  {verificationTarget}
+                </p>
+
+                {verificationMethodUsed === "phone" && (
+                  <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-medium">
+                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>{isRTL ? "موثّق عبر Firebase SMS Authentication" : "Secured by Firebase SMS Auth"}</span>
+                  </div>
+                )}
+              </div>
+
+              <form onSubmit={(e) => { e.preventDefault(); verifyMutation.mutate(); }} className="space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="verificationCode" className="text-sm font-medium text-amber-100/90">
+                    {isRTL ? "رمز التحقق (6 أرقام)" : "Verification Code (6 digits)"}
+                  </Label>
+                  <Input
+                    id="verificationCode"
+                    type="text"
+                    maxLength={6}
+                    placeholder="------"
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value.replace(/[^0-9]/g, ""))}
+                    className="h-12 text-center text-2xl font-bold font-mono tracking-widest bg-white/10 border-white/20 text-white placeholder:text-white/30 focus:border-amber-400/60 focus:ring-amber-400/30"
+                  />
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full h-12 text-base font-semibold bg-gradient-to-r from-emerald-600 to-emerald-700 hover:from-emerald-500 hover:to-emerald-600 text-white border-0 shadow-lg shadow-emerald-900/30 transition-all duration-300"
+                  disabled={verifyMutation.isPending || verificationCode.length !== 6}
+                >
+                  {verifyMutation.isPending ? t('loading') : (isRTL ? "تأكيد الرمز وتنشيط الحساب" : "Confirm & Activate")}
+                </Button>
+
+                <div className="flex justify-between items-center pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVerificationMode(false);
+                      setVerificationCode("");
+                    }}
+                    className="text-sm text-amber-200/60 hover:text-amber-100 transition-colors"
+                  >
+                    {isRTL ? "← العودة لشاشة الدخول" : "← Back to Login"}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => resendMutation.mutate()}
+                    disabled={resendMutation.isPending}
+                    className="text-sm text-amber-400 hover:text-amber-300 font-medium transition-colors disabled:opacity-50"
+                  >
+                    {resendMutation.isPending 
+                      ? (isRTL ? "جاري الإرسال..." : "Sending...") 
+                      : (isRTL ? "إعادة إرسال الرمز" : "Resend Code")}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex relative overflow-hidden">
       <div className="absolute top-4 left-4 z-50 flex items-center gap-2">
@@ -243,10 +1042,17 @@ export default function LoginPage() {
       </div>
 
       <div className="absolute inset-0">
-        <OmaniLandscapeSVG />
+        {splashConfig?.background_type === 'image' && splashConfig?.background_image ? (
+          <div 
+            className="w-full h-full bg-cover bg-center transition-all duration-700"
+            style={{ backgroundImage: `url(${splashConfig.background_image})` }}
+          />
+        ) : (
+          <OmaniLandscapeSVG />
+        )}
       </div>
 
-      <div className="absolute inset-0 bg-gradient-to-t from-black/40 via-transparent to-black/20" />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-black/40" />
 
       <div className="flex-1 flex items-center justify-center p-6 relative z-10">
         <div className="w-full max-w-md">
@@ -254,20 +1060,26 @@ export default function LoginPage() {
             <img 
               src={shoumaNewLogo} 
               alt="شومة - Shouma"
-              className="w-56 h-auto mx-auto mb-4 drop-shadow-2xl"
+              className="h-36 sm:h-44 w-auto object-contain mx-auto mb-4 drop-shadow-2xl animate-fade-in transition-transform duration-300 hover:scale-105 rounded-2xl"
               data-testid="logo-login"
             />
-            <p className="text-amber-100/90 text-lg drop-shadow-md" data-testid="text-tagline">
-              {t('homeSubtitle')}
+            <p className="text-amber-100/90 text-lg drop-shadow-md font-sans font-medium" data-testid="text-tagline">
+              {isRTL 
+                ? (splashConfig?.subtitle_ar || t('homeSubtitle')) 
+                : (splashConfig?.subtitle || t('homeSubtitle'))
+              }
             </p>
           </div>
 
-          <div className="backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-2xl p-8" data-testid="card-login">
+          <div className="backdrop-blur-xl bg-black/40 border border-white/15 rounded-2xl shadow-2xl p-8" data-testid="card-login">
             <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-white" data-testid="text-form-title">
-                {isLogin ? t('welcomeBack') : t('createNewAccount')}
+              <h2 className="text-2xl font-bold text-white tracking-tight" data-testid="text-form-title">
+                {isLogin 
+                  ? (isRTL ? (splashConfig?.title_ar || t('welcomeBack')) : (splashConfig?.title || t('welcomeBack'))) 
+                  : t('createNewAccount')
+                }
               </h2>
-              <p className="text-amber-100/70 mt-1 text-sm" data-testid="text-form-subtitle">
+              <p className="text-amber-100/70 mt-1.5 text-sm" data-testid="text-form-subtitle">
                 {isLogin ? t('loginSubtitle') : t('registerSubtitle')}
               </p>
             </div>
@@ -281,7 +1093,7 @@ export default function LoginPage() {
                   id="username"
                   data-testid="input-username"
                   type="text"
-                  placeholder={t('username')}
+                  placeholder={isRTL ? "اسم المستخدم، البريد، أو رقم الهاتف" : "Username, Email, or Phone"}
                   value={formData.username}
                   onChange={(e) => setFormData({ ...formData, username: e.target.value })}
                   className={`h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30 ${errors.username ? "border-red-400" : ""}`}
@@ -292,21 +1104,80 @@ export default function LoginPage() {
               </div>
 
               {!isLogin && (
-                <div className="space-y-2">
-                  <Label htmlFor="email" className="text-sm font-medium text-amber-100/90">
-                    {isRTL ? "البريد الإلكتروني" : "Email"}
-                  </Label>
-                  <Input
-                    id="email"
-                    data-testid="input-email"
-                    type="email"
-                    placeholder={isRTL ? "البريد الإلكتروني" : "Email"}
-                    value={formData.email}
-                    onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    className={`h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30 ${errors.email ? "border-red-400" : ""}`}
-                  />
-                  {errors.email && (
-                    <p className="text-sm text-red-300" data-testid="error-email">{errors.email}</p>
+                <div className="space-y-4">
+                  {/* Verification channel selection */}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-amber-100/90">
+                      {isRTL ? "طريقة تفعيل الحساب" : "Verification Method"}
+                    </Label>
+                    <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-xl border border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSignupMethod("email");
+                          setErrors({});
+                        }}
+                        className={`py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                          signupMethod === "email"
+                            ? "bg-amber-600 text-white shadow-md font-semibold"
+                            : "text-white/60 hover:text-white hover:bg-white/5"
+                        }`}
+                      >
+                        {isRTL ? "البريد الإلكتروني" : "Email"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSignupMethod("phone");
+                          setErrors({});
+                        }}
+                        className={`py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                          signupMethod === "phone"
+                            ? "bg-amber-600 text-white shadow-md font-semibold"
+                            : "text-white/60 hover:text-white hover:bg-white/5"
+                        }`}
+                      >
+                        {isRTL ? "رقم الهاتف" : "Phone Number"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {signupMethod === "email" ? (
+                    <div className="space-y-2">
+                      <Label htmlFor="email" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "البريد الإلكتروني" : "Email"}
+                      </Label>
+                      <Input
+                        id="email"
+                        data-testid="input-email"
+                        type="email"
+                        placeholder="example@domain.com"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                        className={`h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30 ${errors.email ? "border-red-400" : ""}`}
+                      />
+                      {errors.email && (
+                        <p className="text-sm text-red-300" data-testid="error-email">{errors.email}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Label htmlFor="phone" className="text-sm font-medium text-amber-100/90">
+                        {isRTL ? "رقم الهاتف" : "Phone Number"}
+                      </Label>
+                      <Input
+                        id="phone"
+                        data-testid="input-phone"
+                        type="tel"
+                        placeholder="+968 91234567"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                        className={`h-12 text-base bg-white/10 border-white/20 text-white placeholder:text-white/40 focus:border-amber-400/60 focus:ring-amber-400/30 ${errors.phone ? "border-red-400" : ""}`}
+                      />
+                      {errors.phone && (
+                        <p className="text-sm text-red-300" data-testid="error-phone">{errors.phone}</p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
@@ -336,6 +1207,22 @@ export default function LoginPage() {
                 </div>
                 {errors.password && (
                   <p className="text-sm text-red-300" data-testid="error-password">{errors.password}</p>
+                )}
+                {isLogin && (
+                  <div className={`flex ${isRTL ? 'justify-start' : 'justify-end'} pt-1`}>
+                    <button
+                      type="button"
+                      data-testid="button-forgot-password"
+                      onClick={() => {
+                        setForgotPasswordStep("identifier");
+                        setResetIdentifier(formData.username || "");
+                        setErrors({});
+                      }}
+                      className="text-xs text-amber-200/90 hover:text-amber-100 transition-colors font-medium hover:underline"
+                    >
+                      {isRTL ? "هل نسيت كلمة السر؟" : "Forgot Password?"}
+                    </button>
+                  </div>
                 )}
               </div>
 

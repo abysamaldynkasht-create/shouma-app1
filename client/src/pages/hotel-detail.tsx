@@ -8,6 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import PaymentModal from "@/components/PaymentModal";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { Translate } from "@/components/Translate";
+import { useCurrency } from "@/contexts/CurrencyContext";
 import LanguageSwitcher from "@/components/LanguageSwitcher";
 import ThemeToggle from "@/components/ThemeToggle";
 import type { RoomOption, HotelReview } from "@shared/schema";
@@ -44,6 +46,7 @@ export default function HotelDetailPage() {
   const [dbHotels, setDbHotels] = useState<any[]>([]);
   const params = useParams<{ id: string }>();
   const { t, language, isRTL } = useLanguage();
+  const { formatPrice } = useCurrency();
 
   useEffect(() => {
     fetch('/api/catalog/hotels')
@@ -78,6 +81,9 @@ export default function HotelDetailPage() {
       name: item.name || '',
       nameAr: item.name_ar || item.nameAr || item.name || '',
       description: item.description || '',
+      descriptionEn: item.description_en || item.descriptionEn || '',
+      descriptionFr: item.description_fr || item.descriptionFr || '',
+      descriptionTr: item.description_tr || item.descriptionTr || '',
       city: item.city || '',
       region: item.region || '',
       image: item.image || '',
@@ -110,13 +116,14 @@ export default function HotelDetailPage() {
   const allImages = useMemo(() => {
     if (!hotel) return [];
     const mainImg = hotel.image;
-    const extraString = hotel.additionalImages || "";
+    const extraString = (hotel as any).additionalImages || "";
     if (!extraString) return [mainImg];
     
-    const extras = extraString
-      .split(',')
-      .map((url: string) => url.trim())
-      .filter((url: string) => url.length > 0);
+    const extras = Array.isArray(extraString)
+      ? extraString
+      : typeof extraString === 'string'
+      ? extraString.split(',').map((url: string) => url.trim()).filter((url: string) => url.length > 0)
+      : [];
       
     return [mainImg, ...extras];
   }, [hotel]);
@@ -214,15 +221,17 @@ export default function HotelDetailPage() {
         <div className={`absolute bottom-0 ${isRTL ? 'right-0 left-0' : 'left-0 right-0'} p-6 sm:p-8`}>
           <div className="max-w-6xl mx-auto">
             <div className="flex gap-1 mb-3">
-              {renderStars(hotel.stars)}
+              {renderStars(hotel.stars || 5)}
             </div>
             <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-white mb-3 drop-shadow-lg" data-testid="text-hotel-title">
-              {hotel.nameAr}
+              <Translate text={hotel.nameAr} />
             </h1>
             <div className="flex flex-wrap items-center gap-4 text-white/90">
               <div className="flex items-center gap-2">
                 <MapPin className="w-5 h-5" />
-                <span>{hotel.city}، {hotel.region}</span>
+                <span>
+                  <Translate text={hotel.city} />، <Translate text={hotel.region} />
+                </span>
               </div>
               <div className="flex items-center gap-1">
                 <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
@@ -261,13 +270,7 @@ export default function HotelDetailPage() {
                 {t('aboutHotel')}
               </h2>
               <p className="text-muted-foreground leading-relaxed text-lg" data-testid="text-hotel-description">
-                {language === 'ar' || language === 'fa' 
-                  ? hotel.description 
-                  : language === 'fr' 
-                    ? (hotel.descriptionFr || hotel.descriptionEn || hotel.description)
-                    : language === 'tr'
-                      ? (hotel.descriptionTr || hotel.descriptionEn || hotel.description)
-                      : (hotel.descriptionEn || hotel.description)}
+                <Translate text={hotel.description} />
               </p>
             </section>
 
@@ -276,12 +279,12 @@ export default function HotelDetailPage() {
                 {t('facilitiesAndServices')}
               </h2>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                {(hotel.amenities || []).map((amenity) => (
+                {(hotel.amenities || []).map((amenity: string) => (
                   <div key={amenity} className="flex items-center gap-3 p-3 bg-card rounded-lg border border-border">
                     <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
                       <Check className="w-4 h-4 text-primary" />
                     </div>
-                    <span className="text-sm font-medium">{amenity}</span>
+                    <span className="text-sm font-medium"><Translate text={amenity} /></span>
                   </div>
                 ))}
               </div>
@@ -293,7 +296,7 @@ export default function HotelDetailPage() {
                   {t('roomOptions')}
                 </h2>
                 <div className="space-y-4">
-                  {hotel.roomOptions.map((room) => (
+                  {hotel.roomOptions.map((room: any) => (
                     <Card 
                       key={room.id} 
                       className={`overflow-hidden cursor-pointer transition-all ${
@@ -319,12 +322,12 @@ export default function HotelDetailPage() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <Bed className="w-5 h-5 text-primary" />
-                              <h3 className="font-bold text-lg">{room.nameAr}</h3>
+                              <h3 className="font-bold text-lg"><Translate text={room.nameAr} /></h3>
                               {selectedRoom?.id === room.id && (
                                 <Badge className="bg-primary text-primary-foreground">{t('selected')}</Badge>
                               )}
                             </div>
-                            <p className="text-muted-foreground text-sm mb-3">{room.description}</p>
+                            <p className="text-muted-foreground text-sm mb-3"><Translate text={room.description} /></p>
                             <div className="flex items-center gap-4 text-sm text-muted-foreground">
                               <div className="flex items-center gap-1">
                                 <Users className="w-4 h-4" />
@@ -332,9 +335,9 @@ export default function HotelDetailPage() {
                               </div>
                             </div>
                             <div className="flex flex-wrap gap-2 mt-3">
-                              {(room.amenities || []).slice(0, 4).map((amenity) => (
+                              {(room.amenities || []).slice(0, 4).map((amenity: string) => (
                                 <Badge key={amenity} variant="secondary" className="text-xs">
-                                  {amenity}
+                                  <Translate text={amenity} />
                                 </Badge>
                               ))}
                               {(room.amenities || []).length > 4 && (
@@ -345,7 +348,7 @@ export default function HotelDetailPage() {
                             </div>
                           </div>
                           <div className={`${isRTL ? 'text-left sm:text-right' : 'text-right sm:text-left'}`}>
-                            <p className="text-2xl font-bold text-primary">{room.pricePerNight} {t('omr')}</p>
+                            <p className="text-2xl font-bold text-primary">{formatPrice(room.pricePerNight)}</p>
                             <p className="text-sm text-muted-foreground">{t('perNight')}</p>
                             <Button 
                               className="mt-3"
@@ -375,7 +378,7 @@ export default function HotelDetailPage() {
                   {t('photoGallery')}
                 </h2>
                 <div className="grid grid-cols-2 gap-4">
-                  {hotel.gallery.map((img, index) => (
+                  {hotel.gallery.map((img: string, index: number) => (
                     <div key={index} className="aspect-video rounded-xl overflow-hidden">
                       <img src={img} alt={`${hotel.nameAr} ${index + 1}`} className="w-full h-full object-cover" />
                     </div>
@@ -527,7 +530,7 @@ export default function HotelDetailPage() {
               <CardContent className="p-6 space-y-4">
                 <div className="text-center pb-4 border-b border-border">
                   <p className="text-sm text-muted-foreground mb-1">{t('priceStartsFrom')}</p>
-                  <p className="text-3xl font-bold text-primary">{hotel.pricePerNight} {t('omr')}</p>
+                  <p className="text-3xl font-bold text-primary">{formatPrice(hotel.pricePerNight)}</p>
                   <p className="text-xs text-muted-foreground">{t('perNight')}</p>
                 </div>
                 
@@ -558,7 +561,7 @@ export default function HotelDetailPage() {
                   <div>
                     <p className="text-sm text-muted-foreground">{t('classification')}</p>
                     <div className="flex gap-0.5">
-                      {renderStars(hotel.stars)}
+                      {renderStars(hotel.stars || 5)}
                     </div>
                   </div>
                 </div>
@@ -622,6 +625,13 @@ export default function HotelDetailPage() {
                     {t('book')}
                   </Button>
                 )}
+
+                <div className="pt-2 text-center">
+                  <div className="inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-700 dark:text-purple-300 border border-purple-500/20 text-[11px] font-medium w-full">
+                    <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
+                    <span>الدفع الآمن عبر بوابة ثواني العُمانية (Thawani Pay)</span>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -634,8 +644,8 @@ export default function HotelDetailPage() {
           pricePerNight={selectedRoom ? selectedRoom.pricePerNight : hotel.pricePerNight}
           nights={1}
           hotelId={hotel?.id}
-          splitShoumaPct={hotel?.splitShoumaPct}
-          splitHotelPct={hotel?.splitHotelPct}
+          splitShoumaPct={(hotel as any)?.splitShoumaPct || 10}
+          splitHotelPct={(hotel as any)?.splitHotelPct || 90}
         />
 
         {relatedHotels.length > 0 && (
@@ -658,22 +668,22 @@ export default function HotelDetailPage() {
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                     <div className={`absolute top-3 flex gap-0.5 ${isRTL ? 'right-3' : 'left-3'}`}>
-                      {Array.from({ length: related.stars }, (_, i) => (
+                      {Array.from({ length: related.stars || 5 }, (_, i) => (
                         <Star key={i} className="w-3 h-3 fill-yellow-400 text-yellow-400" />
                       ))}
                     </div>
                   </div>
                   <CardContent className="p-4">
                     <h3 className="text-lg font-bold text-foreground mb-2">
-                      {related.nameAr}
+                      <Translate text={related.nameAr} />
                     </h3>
                     <div className="flex items-center gap-1 text-muted-foreground text-sm mb-2">
                       <MapPin className="w-4 h-4" />
-                      <span>{related.city}</span>
+                      <span><Translate text={related.city} /></span>
                     </div>
                     <div className="flex items-center justify-between pt-2 border-t border-border">
                       <span className="text-sm text-muted-foreground">{t('perNight')}</span>
-                      <span className="font-bold text-primary">{related.pricePerNight} {t('omr')}</span>
+                      <span className="font-bold text-primary">{formatPrice(related.pricePerNight)}</span>
                     </div>
                   </CardContent>
                 </Card>
