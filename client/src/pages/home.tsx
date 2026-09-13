@@ -73,7 +73,7 @@ const iconMap: Record<string, React.ReactNode> = {
 
 export default function HomePage() {
   const [, setLocation] = useLocation();
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
   const username = localStorage.getItem('shouma-username');
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const { isDark, toggle: toggleTheme } = useTheme();
@@ -298,8 +298,8 @@ export default function HomePage() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setLocation("/my-bookings")}
-                className="relative text-emerald-600 hover:text-emerald-500 hover:bg-emerald-500/10 transition-all duration-300"
-                title={isRTL ? "حقيبتي: حجوزاتي وجداولي المحفوظة" : "My Bookings & Saved Itineraries"}
+                className="relative text-muted-foreground hover:text-foreground transition-all duration-300"
+                title={t('myBookingsTooltip')}
                 data-testid="button-my-bookings"
               >
                 <Briefcase className="w-5 h-5 hover:scale-110 transition-transform duration-300" />
@@ -311,7 +311,7 @@ export default function HomePage() {
                 size="icon"
                 onClick={() => setLocation("/settings")}
                 className="relative text-muted-foreground hover:text-foreground transition-all duration-300"
-                title={isRTL ? "الإعدادات والتفضيلات" : "Settings & Preferences"}
+                title={t('settingsTooltip')}
                 data-testid="button-settings"
               >
                 <Settings className="w-5 h-5 hover:rotate-45 transition-transform duration-300" />
@@ -415,7 +415,7 @@ export default function HomePage() {
                         {/* Live/Ad Tag */}
                         <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
                           <span className="px-3 py-1 bg-amber-500/90 text-white text-[10px] sm:text-xs font-black tracking-wide rounded-full shadow-lg animate-pulse">
-                            {isRTL ? "ترويج" : "PROMOTED"}
+                            {t('promoted')}
                           </span>
                         </div>
 
@@ -424,21 +424,21 @@ export default function HomePage() {
                           <div className="flex items-center gap-2 mb-3">
                             <Sparkles className="w-5 h-5 text-amber-400 animate-pulse" />
                             <span className="text-amber-400 text-xs sm:text-sm font-black uppercase tracking-wider">
-                              {isRTL ? "مستجدات شومة" : "Shouma Spotlight"}
+                              {t('shoumaSpotlight')}
                             </span>
                           </div>
 
                           <h2 className="text-xl sm:text-2xl md:text-3xl lg:text-4xl font-black text-white mb-2 leading-tight drop-shadow-md font-sans">
-                            {isRTL ? ad.title_ar : ad.title}
+                            {language === 'ar' ? (ad.title_ar || ad.title) : (ad.title || ad.title_ar)}
                           </h2>
 
                           <p className="text-white/85 text-xs sm:text-sm md:text-base max-w-xl mb-4 leading-relaxed font-sans drop-shadow">
-                            {isRTL ? ad.description_ar : ad.description}
+                            {language === 'ar' ? (ad.description_ar || ad.description) : (ad.description || ad.description_ar)}
                           </p>
 
                           {ad.link && (
                             <span className="inline-flex items-center gap-2 text-xs font-bold text-amber-300 group-hover:text-amber-200 transition-colors bg-white/10 backdrop-blur-sm px-3.5 py-2 rounded-full border border-white/10">
-                              {isRTL ? "اكتشف المزيد الآن" : "Explore More Now"}
+                              {t('exploreMoreNow')}
                               <ChevronRight className={`w-3.5 h-3.5 transform transition-transform ${isRTL ? 'rotate-180 group-hover:-translate-x-1' : 'group-hover:translate-x-1'}`} />
                             </span>
                           )}

@@ -175,14 +175,14 @@ export default function HospitalsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {hospital.services.slice(0, 3).map((service) => (
+                  {(hospital.services || []).slice(0, 3).map((service) => (
                     <Badge key={service} variant="secondary" className="text-xs">
                       {service}
                     </Badge>
                   ))}
-                  {hospital.services.length > 3 && (
+                  {(hospital.services || []).length > 3 && (
                     <Badge variant="outline" className="text-xs">
-                      +{hospital.services.length - 3}
+                      +{(hospital.services || []).length - 3}
                     </Badge>
                   )}
                 </div>

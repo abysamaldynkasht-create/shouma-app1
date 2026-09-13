@@ -109,7 +109,8 @@ export default function HotelsPage() {
   }, [combinedHotels, searchQuery, selectedRegion]);
 
   const renderStars = (count: number) => {
-    return Array.from({ length: count }, (_, i) => (
+    const validCount = Math.max(0, Math.min(5, Math.floor(Number(count) || 0)));
+    return Array.from({ length: validCount }, (_, i) => (
       <Star key={i} className="w-3 h-3 fill-yellow-400 text-yellow-400" />
     ));
   };

@@ -153,10 +153,11 @@ export default function PaymentModal({
         alert("يرجى إدخال جميع بيانات البطاقة البنكية (رقم البطاقة، تاريخ الانتهاء، رمز الأمان، الاسم)");
         return;
       }
-      // Trigger 3D Secure / OmanNet OTP Step for maximum realism and security
-      const genOtp = String(Math.floor(100000 + Math.random() * 900000));
-      setSimulatedOtp(genOtp);
-      setStep("otp");
+      // OTP disabled temporarily: Proceed directly to payment execution
+      setIsProcessing(true);
+      setTimeout(async () => {
+        await executeFinalBooking("بطاقة بنكية عبر بوابة ثواني (عُمان نت / Visa / Mastercard)");
+      }, 1200);
       return;
     }
 

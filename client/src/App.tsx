@@ -43,6 +43,7 @@ import MyBookingsPage from "@/pages/my-bookings";
 
 import CustomerService from "@/components/CustomerService";
 import { AutoDOMTranslator } from "@/components/AutoDOMTranslator";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 function Router() {
   return (
@@ -105,7 +106,9 @@ function App() {
           <TooltipProvider>
             <Toaster />
             <AutoDOMTranslator />
-            <Router />
+            <ErrorBoundary>
+              <Router />
+            </ErrorBoundary>
             <CustomerService />
           </TooltipProvider>
         </CurrencyProvider>

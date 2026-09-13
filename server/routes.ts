@@ -223,7 +223,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ==========================================
-  // AUTH & VERIFICATION ENDPOINTS
+  // AUTH & VERIFICATION ENDPOINTS (OTP TEMPORARILY DISABLED)
   // ==========================================
 
   app.post("/api/auth/register", async (req, res) => {
@@ -238,38 +238,27 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(400).json({ error: "اسم المستخدم مسجل بالفعل" });
       }
 
-      // Generate a 6-digit OTP code
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
       const method = verifiedVia || (phone ? "phone" : "email");
 
+      // OTP disabled: User is automatically verified upon creation
       const user = await storage.createUser({
         username,
         password,
         email: email || "",
         phone: phone || "",
-        isVerified: false,
-        verificationCode,
+        isVerified: true,
+        verificationCode: "",
         verifiedVia: method,
       });
-
-      // Send the OTP via verification service (async)
-      const target = method === "email" ? email : phone;
-      if (target) {
-        dispatchOTP(method, target, verificationCode, username).catch((err) => {
-          console.error(`[VERIFICATION SERVICE] Async dispatch error for ${username}:`, err);
-        });
-      }
-
-      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
 
       res.status(201).json({
         id: user.id,
         username: user.username,
         email: user.email,
         phone: user.phone,
-        requiresVerification: true,
-        ...(isRealConfigured ? {} : { verificationCode }),
-        verifiedVia: method
+        requiresVerification: false,
+        verifiedVia: method,
+        message: "تم إنشاء الحساب بنجاح"
       });
     } catch (err: any) {
       console.error("Registration error:", err);
@@ -305,40 +294,17 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(401).json({ error: "اسم المستخدم أو كلمة المرور غير صحيحة" });
       }
 
-      // If user registration is pending OTP verification, trigger re-send and lock login
+      // OTP disabled: Automatically mark any unverified user as verified on login
       if (!user.isVerified) {
-        let code = user.verificationCode;
-        if (!code) {
-          code = Math.floor(100000 + Math.random() * 900000).toString();
-          await storage.updateUserVerification(username, false, code);
-        }
-
-        const via = user.verifiedVia || (user.phone ? "phone" : "email");
-        const target = via === "email" ? user.email : user.phone;
-        if (target) {
-          dispatchOTP(via, target, code, username).catch((err) => {
-            console.error(`[VERIFICATION SERVICE] Async login dispatch error for ${username}:`, err);
-          });
-        }
-
-        const isRealConfigured = via === "email" ? isMailConfigured() : isPhoneSMSConfigured();
-
-        return res.status(403).json({
-          message: "الحساب غير نشط. يرجى إكمال التحقق أولاً.",
-          requiresVerification: true,
-          username: user.username,
-          ...(isRealConfigured ? {} : { verificationCode: code }),
-          verifiedVia: via,
-          email: user.email,
-          phone: user.phone
-        });
+        await storage.updateUserVerification(username, true, "");
       }
 
       res.json({
         id: user.id,
         username: user.username,
         email: user.email,
-        phone: user.phone
+        phone: user.phone,
+        requiresVerification: false
       });
     } catch (err: any) {
       console.error("Login error:", err);
@@ -347,9 +313,9 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/auth/verify", async (req, res) => {
-    const { username, code } = req.body;
-    if (!username || !code) {
-      return res.status(400).json({ error: "Username and code are required" });
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ error: "Username is required" });
     }
 
     try {
@@ -358,12 +324,9 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(404).json({ error: "المستخدم غير موجود" });
       }
 
-      if (user.verificationCode === code || code === "123456") {
-        await storage.updateUserVerification(username, true, "");
-        res.json({ success: true, message: "تم تفعيل الحساب بنجاح" });
-      } else {
-        res.status(400).json({ error: "رمز التحقق غير صحيح" });
-      }
+      // OTP disabled: always mark as verified
+      await storage.updateUserVerification(username, true, "");
+      res.json({ success: true, message: "تم تفعيل الحساب بنجاح" });
     } catch (err: any) {
       console.error("Verification error:", err);
       res.status(500).json({ error: err.message });
@@ -371,7 +334,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/auth/verify-firebase-phone", async (req, res) => {
-    const { username, firebaseUid } = req.body;
+    const { username } = req.body;
     if (!username) {
       return res.status(400).json({ error: "اسم المستخدم مطلوب" });
     }
@@ -383,7 +346,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       }
 
       await storage.updateUserVerification(user.username, true, "");
-      res.json({ success: true, message: "تم تفعيل الحساب بنجاح عبر Firebase SMS" });
+      res.json({ success: true, message: "تم تفعيل الحساب بنجاح" });
     } catch (err: any) {
       console.error("Firebase phone verification error:", err);
       res.status(500).json({ error: err.message });
@@ -391,40 +354,10 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/auth/resend-code", async (req, res) => {
-    const { username, verifiedVia } = req.body;
-    if (!username) {
-      return res.status(400).json({ error: "Username is required" });
-    }
-
-    try {
-      const user = await storage.getUserByUsername(username);
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
-
-      const method = verifiedVia || user.verifiedVia || (user.phone ? "phone" : "email");
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-
-      await storage.setUserVerificationDetails(username, code, method);
-
-      const target = method === "email" ? user.email : user.phone;
-      if (target) {
-        dispatchOTP(method, target, code, username).catch((err) => {
-          console.error(`[VERIFICATION SERVICE] Async resend error for ${username}:`, err);
-        });
-      }
-
-      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
-
-      res.json({
-        success: true,
-        ...(isRealConfigured ? {} : { verificationCode: code }),
-        message: "تم إعادة إرسال رمز التحقق بنجاح"
-      });
-    } catch (err: any) {
-      console.error("Resend code error:", err);
-      res.status(500).json({ error: err.message });
-    }
+    res.json({
+      success: true,
+      message: "تم تعطيل نظام OTP مؤقتاً، الحساب مفعل تلقائياً"
+    });
   });
 
   app.post("/api/auth/forgot-password", async (req, res) => {
@@ -440,27 +373,12 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(404).json({ error: "لم نتمكن من العثور على حساب بهذه البيانات" });
       }
 
-      const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-      const method = (clean === user.phone || (!clean.includes("@") && user.phone)) ? "phone" : "email";
-
-      await storage.setUserVerificationDetails(user.username, verificationCode, method);
-
-      const target = method === "email" ? user.email : user.phone;
-      if (target) {
-        dispatchOTP(method, target, verificationCode, user.username).catch((err) => {
-          console.error(`[VERIFICATION SERVICE] Async forgot password dispatch error for ${user.username}:`, err);
-        });
-      }
-
-      const isRealConfigured = method === "email" ? isMailConfigured() : isPhoneSMSConfigured();
-
+      // OTP disabled: allow direct reset without sending OTP
       res.json({
         success: true,
         username: user.username,
-        verifiedVia: method,
-        target: target || "",
-        ...(isRealConfigured ? {} : { verificationCode }),
-        message: "تم إرسال رمز التحقق بنجاح"
+        requiresOtp: false,
+        message: "تم العثور على الحساب، يمكنك الآن تعيين كلمة المرور الجديدة مباشرة"
       });
     } catch (err: any) {
       console.error("Forgot password error:", err);
@@ -469,32 +387,13 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   app.post("/api/auth/verify-reset-code", async (req, res) => {
-    const { username, code } = req.body;
-    if (!username || !code) {
-      return res.status(400).json({ error: "اسم المستخدم ورمز التحقق مطلوبان" });
-    }
-
-    try {
-      const user = await storage.getUserByUsername(username);
-      if (!user) {
-        return res.status(404).json({ error: "المستخدم غير موجود" });
-      }
-
-      if (user.verificationCode === code || code === "123456") {
-        res.json({ success: true, message: "تم التحقق من الرمز بنجاح" });
-      } else {
-        res.status(400).json({ error: "رمز التحقق غير صحيح" });
-      }
-    } catch (err: any) {
-      console.error("Verify reset code error:", err);
-      res.status(500).json({ error: err.message });
-    }
+    res.json({ success: true, message: "تم التحقق بنجاح" });
   });
 
   app.post("/api/auth/reset-password", async (req, res) => {
-    const { username, code, newPassword } = req.body;
-    if (!username || !code || !newPassword) {
-      return res.status(400).json({ error: "جميع البيانات مطلوبة" });
+    const { username, newPassword } = req.body;
+    if (!username || !newPassword) {
+      return res.status(400).json({ error: "اسم المستخدم وكلمة المرور الجديدة مطلوبان" });
     }
 
     const cleanPass = String(newPassword).trim();
@@ -508,10 +407,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
         return res.status(404).json({ error: "المستخدم غير موجود" });
       }
 
-      if (user.verificationCode !== code && code !== "123456") {
-        return res.status(400).json({ error: "رمز التحقق غير صحيح أو منتهي الصلاحية" });
-      }
-
+      // OTP disabled: update password directly
       await storage.updateUserPassword(user.username, cleanPass);
       res.json({ success: true, message: "تم تغيير كلمة المرور وتحديثها بنجاح" });
     } catch (err: any) {
@@ -1785,8 +1681,23 @@ export async function registerRoutes(httpServer: Server, app: Express) {
   });
 
   // ==========================================
-  // VOICE GUIDE STREAMING
+  // VOICE GUIDE STREAMING & SCRIPT GENERATION
   // ==========================================
+
+  app.post("/api/voice-guide-script", async (req, res) => {
+    const { text, attractionName, location, language } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    try {
+      const script = await generateTourGuideScript(attractionName, location, text, language || "ar");
+      res.json({ script });
+    } catch (err: any) {
+      console.error("Tour guide script error:", err);
+      res.status(500).json({ error: err.message || "Failed to generate script" });
+    }
+  });
 
   app.post("/api/voice-guide", async (req, res) => {
     const { text, attractionName, location, voice, language } = req.body;
@@ -1798,7 +1709,7 @@ export async function registerRoutes(httpServer: Server, app: Express) {
       const finalVoice = voice || "nova";
       res.setHeader("Content-Type", "text/plain");
 
-      // Generate AI Tour Guide Script on-the-fly using Gemini 3.5 Flash
+      // Generate AI Tour Guide Script on-the-fly using Gemini
       const aiNarrative = await generateTourGuideScript(attractionName, location, text, language);
 
       // Streams chunks of audio in real-time

@@ -35,6 +35,7 @@ import {
 import { SiPaypal, SiApplepay, SiVisa, SiMastercard } from "react-icons/si";
 import { useLanguage } from "@/contexts/LanguageContext";
 import { Translate } from "@/components/Translate";
+import { VoiceGuide } from "@/components/VoiceGuide";
 
 
 interface Gateway {
@@ -320,7 +321,12 @@ export default function HikingDetailPage() {
           <div className="lg:col-span-2 space-y-8">
             <div>
               <h2 className="text-2xl font-bold text-foreground mb-4"><Translate text="تفاصيل المغامرة" /></h2>
-              <p className="text-muted-foreground leading-relaxed text-lg whitespace-pre-line">
+              <VoiceGuide 
+                text={trip.description}
+                attractionName={trip.nameAr || trip.name}
+                location={`${trip.location}، ${trip.region}`}
+              />
+              <p className="text-muted-foreground leading-relaxed text-lg whitespace-pre-line mt-4">
                 <Translate text={trip.description} />
               </p>
             </div>

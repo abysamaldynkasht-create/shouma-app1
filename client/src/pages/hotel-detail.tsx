@@ -100,7 +100,28 @@ export default function HotelDetailPage() {
       splitShoumaPct: item.split_shouma_pct !== undefined ? Number(item.split_shouma_pct) : (item.splitShoumaPct !== undefined ? Number(item.splitShoumaPct) : 15),
       splitHotelPct: item.split_hotel_pct !== undefined ? Number(item.split_hotel_pct) : (item.splitHotelPct !== undefined ? Number(item.splitHotelPct) : 85),
     }));
-    return [...hotels, ...formatted];
+
+    const normalizedStatic = hotels.map(h => ({
+      ...h,
+      gallery: Array.isArray(h.gallery) ? h.gallery : [],
+      reviews: Array.isArray(h.reviews) ? h.reviews : [],
+      amenities: Array.isArray(h.amenities) && h.amenities.length > 0 ? h.amenities : ["واي فاي", "موقف سيارات", "مسبح", "تكييف"],
+      roomOptions: Array.isArray(h.roomOptions) && h.roomOptions.length > 0
+        ? h.roomOptions
+        : Array.isArray(h.rooms) && h.rooms.length > 0
+        ? h.rooms.map((r: any) => ({
+            id: r.id,
+            nameAr: r.nameAr || r.name || "غرفة",
+            description: r.description || r.nameAr || "",
+            maxGuests: typeof r.capacity === 'number' ? r.capacity : (parseInt(r.capacity) || 2),
+            amenities: r.amenities || h.amenities || [],
+            pricePerNight: r.priceOMR || r.pricePerNight || h.pricePerNight,
+            image: r.image || h.image
+          }))
+        : []
+    }));
+
+    return [...normalizedStatic, ...formatted];
   }, [dbHotels]);
   
   const hotel = combinedHotels.find((h) => h.id === params.id);
@@ -109,7 +130,7 @@ export default function HotelDetailPage() {
 
   useEffect(() => {
     if (hotel) {
-      setActiveImage(hotel.image);
+      setActiveImage(hotel.image || "");
     }
   }, [hotel]);
 
@@ -117,7 +138,7 @@ export default function HotelDetailPage() {
     if (!hotel) return [];
     const mainImg = hotel.image;
     const extraString = (hotel as any).additionalImages || "";
-    if (!extraString) return [mainImg];
+    if (!extraString) return [mainImg].filter(Boolean);
     
     const extras = Array.isArray(extraString)
       ? extraString
@@ -125,17 +146,18 @@ export default function HotelDetailPage() {
       ? extraString.split(',').map((url: string) => url.trim()).filter((url: string) => url.length > 0)
       : [];
       
-    return [mainImg, ...extras];
+    return [mainImg, ...extras].filter(Boolean);
   }, [hotel]);
   
   useEffect(() => {
-    if (hotel?.reviews) {
+    if (hotel?.reviews && Array.isArray(hotel.reviews)) {
       setReviews(hotel.reviews);
     }
   }, [hotel]);
 
   const renderStars = (count: number) => {
-    return Array.from({ length: count }, (_, i) => (
+    const validCount = Math.max(0, Math.min(5, Math.floor(Number(count) || 0)));
+    return Array.from({ length: validCount }, (_, i) => (
       <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
     ));
   };
@@ -372,7 +394,7 @@ export default function HotelDetailPage() {
               </section>
             )}
 
-            {hotel.gallery.length > 1 && (
+            {Array.isArray(hotel.gallery) && hotel.gallery.length > 1 && (
               <section>
                 <h2 className="text-2xl font-bold text-foreground mb-4">
                   {t('photoGallery')}

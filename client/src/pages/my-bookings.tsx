@@ -6,6 +6,7 @@ import { useCurrency } from "@/contexts/CurrencyContext";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/ThemeToggle";
 import { useToast } from "@/hooks/use-toast";
+import { LanguageSwitcher } from "@/components/LanguageSwitcher";
 import {
   ArrowLeft,
   ArrowRight,
@@ -32,7 +33,7 @@ import {
 
 export default function MyBookingsPage() {
   const [, setLocation] = useLocation();
-  const { isRTL, language } = useLanguage();
+  const { isRTL, language, t } = useLanguage();
   const { formatPrice } = useCurrency();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -218,26 +219,27 @@ export default function MyBookingsPage() {
               size="icon"
               onClick={() => setLocation("/home")}
               className="rounded-full hover:bg-accent/80"
-              title={isRTL ? "العودة للرئيسية" : "Back to Home"}
+              title={t('backToHome')}
             >
               {isRTL ? <ArrowRight className="w-5 h-5" /> : <ArrowLeft className="w-5 h-5" />}
             </Button>
             <div>
               <h1 className="text-xl font-extrabold tracking-tight flex items-center gap-2">
                 <Briefcase className="w-5 h-5 text-emerald-600" />
-                {isRTL ? "حقيبتي: حجوزاتي وجداولي" : "My Travel Hub"}
+                {t('myBookingsTitle')}
               </h1>
               <p className="text-xs text-muted-foreground">
-                {isRTL 
-                  ? "إدارة جداول شومتك وجدول جولاتك ومستندات حجزك السياحي" 
-                  : "Manage your custom itineraries and active tourism reservations in Oman"}
+                {t('myBookingsDesc')}
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-3 py-1.5 rounded-full text-xs border border-emerald-500/20">
-            <User className="w-3.5 h-3.5" />
-            <span>{isRTL ? "المستخدم:" : "User:"} {username}</span>
+          <div className="flex items-center gap-2">
+            <LanguageSwitcher />
+            <div className="flex items-center gap-2 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-bold px-3 py-1.5 rounded-full text-xs border border-emerald-500/20">
+              <User className="w-3.5 h-3.5" />
+              <span>{isRTL ? "المستخدم:" : "User:"} {username}</span>
+            </div>
           </div>
         </div>
       </header>
@@ -258,7 +260,7 @@ export default function MyBookingsPage() {
             }`}
           >
             <Compass className="w-4 h-4" />
-            {isRTL ? "الجداول السياحية المحفوظة" : "Saved Itineraries"}
+            {t('savedItineraries')}
             <span className="ml-1 bg-accent/80 text-muted-foreground text-xs px-2 py-0.5 rounded-full font-bold">
               {savedItineraries.length}
             </span>
@@ -275,7 +277,7 @@ export default function MyBookingsPage() {
             }`}
           >
             <Calendar className="w-4 h-4" />
-            {isRTL ? "قسم حجوزاتي السياحية" : "My Reservations"}
+            {t('activeBookings')}
             <span className="ml-1 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-xs px-2 py-0.5 rounded-full font-bold">
               {filteredBookings.length}
             </span>
@@ -295,7 +297,7 @@ export default function MyBookingsPage() {
                   bookingFilter === "all" ? "bg-emerald-600 hover:bg-emerald-700" : ""
                 }`}
               >
-                {isRTL ? "الكل" : "All"}
+                {t('all')}
               </Button>
               <Button
                 variant={bookingFilter === "hotels" ? "default" : "outline"}
@@ -306,7 +308,7 @@ export default function MyBookingsPage() {
                 }`}
               >
                 <Hotel className="w-3.5 h-3.5" />
-                {isRTL ? "الفنادق" : "Hotels"}
+                {t('hotels')}
               </Button>
               <Button
                 variant={bookingFilter === "hiking" ? "default" : "outline"}
@@ -317,7 +319,7 @@ export default function MyBookingsPage() {
                 }`}
               >
                 <Mountain className="w-3.5 h-3.5" />
-                {isRTL ? "الهايكنج" : "Hiking"}
+                {t('hiking')}
               </Button>
               <Button
                 variant={bookingFilter === "cars" ? "default" : "outline"}
@@ -328,14 +330,12 @@ export default function MyBookingsPage() {
                 }`}
               >
                 <Car className="w-3.5 h-3.5" />
-                {isRTL ? "السيارات والأجرة" : "Transport"}
+                {t('taxis')}
               </Button>
             </div>
           ) : (
             <div className="text-sm font-medium text-muted-foreground w-full md:w-auto text-start">
-              {isRTL 
-                ? "تصفح الجداول المخصصة التي قمت بتخطيطها وتخزينها لحسابك" 
-                : "Browse custom planned day-by-day itineraries saved to this device."}
+              {t('myBookingsDesc')}
             </div>
           )}
 
@@ -399,7 +399,7 @@ export default function MyBookingsPage() {
                         {it.title || (isRTL ? "مخطط سياحي مخصص" : "Custom Smart Itinerary")}
                       </h3>
 
-                      {it.days && (
+                      {Array.isArray(it.days) && it.days.length > 0 && (
                         <p className="text-xs text-muted-foreground text-start line-clamp-2 leading-relaxed">
                           {isRTL 
                             ? `يحتوي هذا الجدول على ${it.days.length} أيام من الأنشطة المنظمة بعناية لزيارة معالم ومحافظات عُمان الرائعة.`

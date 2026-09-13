@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLanguage } from "@/contexts/LanguageContext";
+import { languages, type Language } from "@/lib/translations";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/ThemeToggle";
 import { useToast } from "@/hooks/use-toast";
@@ -29,7 +30,8 @@ import {
   Sparkles,
   LogOut,
   Briefcase,
-  Compass
+  Compass,
+  Globe
 } from "lucide-react";
 
 interface AccessibilitySettings {
@@ -56,7 +58,7 @@ const defaultAccessibility: AccessibilitySettings = {
 
 export default function SettingsPage() {
   const [, setLocation] = useLocation();
-  const { isRTL } = useLanguage();
+  const { language, setLanguage, isRTL, t } = useLanguage();
   const { isDark, toggle: toggleTheme } = useTheme();
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -346,6 +348,36 @@ export default function SettingsPage() {
                   <Coins className="w-4 h-4 text-primary" />
                   {isRTL ? "خيارات السفر والإقليمية" : "Regional Travel Preferences"}
                 </h2>
+
+                {/* Language preference */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Globe className="w-3.5 h-3.5 text-primary" />
+                    {isRTL ? "لغة واجهة التطبيق" : "Application Language"}
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {languages.map((lang) => (
+                      <button
+                        key={lang.code}
+                        onClick={() => {
+                          setLanguage(lang.code as Language);
+                          toast({
+                            title: lang.code === "ar" ? "تم تغيير اللغة" : "Language Changed",
+                            description: `${lang.flag} ${lang.nativeName}`,
+                          });
+                        }}
+                        className={`py-2 px-2.5 rounded-lg border text-xs font-bold transition-all flex flex-col items-center justify-center gap-1 ${
+                          language === lang.code
+                            ? "bg-primary/10 border-primary text-primary shadow-xs ring-1 ring-primary/30"
+                            : "border-input bg-background text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                        }`}
+                      >
+                        <span className="text-sm">{lang.flag}</span>
+                        <span className="truncate max-w-full">{lang.nativeName}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 {/* Currency preference */}
                 <div className="space-y-2">

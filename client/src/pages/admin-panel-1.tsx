@@ -11,6 +11,7 @@ import {
   LogIn, LogOut, UserCheck, ShieldCheck, Building2, UserPlus, Filter, Search
 } from 'lucide-react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { LanguageSwitcher } from '@/components/LanguageSwitcher';
 import { 
   ResponsiveContainer, 
   AreaChart, 
@@ -73,7 +74,7 @@ interface TripBooking {
 }
 
 export default function AdminPanelOne() {
-  const { isRTL } = useLanguage();
+  const { isRTL, t } = useLanguage();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState('');
@@ -2017,14 +2018,17 @@ export default function AdminPanelOne() {
             <p className="text-xs text-slate-400 mt-1">تعديل وحذف وإضافة كل تفاصيل التطبيق وقاعدة البيانات التشاركية في مسقط وظفار</p>
           </div>
 
-          <button
-            id="btn-refresh-data"
-            onClick={fetchAllData}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>تحديث كل البيانات</span>
-          </button>
+          <div className="flex items-center gap-3">
+            <LanguageSwitcher />
+            <button
+              id="btn-refresh-data"
+              onClick={fetchAllData}
+              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white font-bold rounded-xl text-xs transition-all flex items-center gap-1.5 cursor-pointer"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+              <span>{t('refreshData')}</span>
+            </button>
+          </div>
         </header>
 
         {/* Global Action Banners */}

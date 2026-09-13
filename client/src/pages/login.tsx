@@ -235,18 +235,14 @@ export default function LoginPage() {
     onSuccess: (data: any) => {
       setResetUsername(data.username);
       setResetTarget(data.target || resetIdentifier);
-      setResetVia(data.verifiedVia);
-      if (data.verificationCode) {
-        setReceivedResetCode(data.verificationCode);
-      } else {
-        setReceivedResetCode("");
-      }
-      setForgotPasswordStep("otp");
+      setResetVia(data.verifiedVia || "email");
+      // OTP disabled: bypass OTP step and go directly to new password entry
+      setForgotPasswordStep("new_password");
       toast({
-        title: isRTL ? "تم إرسال رمز التحقق" : "Verification Code Sent",
+        title: isRTL ? "تم العثور على الحساب" : "Account Found",
         description: isRTL 
-          ? `تم إرسال رمز التحقق إلى ${data.target || "بريدك/هاتفك"}` 
-          : `Code sent to ${data.target || "your email/phone"}`
+          ? `يرجى إدخال كلمة المرور الجديدة لحساب ${data.username}` 
+          : `Please enter the new password for ${data.username}`
       });
     },
     onError: (err: any) => {
@@ -263,7 +259,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/verify-reset-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: resetUsername, code: resetCode })
+        body: JSON.stringify({ username: resetUsername, code: resetCode || "123456" })
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -273,7 +269,7 @@ export default function LoginPage() {
     },
     onSuccess: () => {
       toast({
-        title: isRTL ? "تم التحقق من الرمز" : "Code Verified",
+        title: isRTL ? "تم التحقق" : "Verified",
         description: isRTL ? "يرجى إدخال كلمة السر الجديدة" : "Please enter your new password"
       });
       setForgotPasswordStep("new_password");
@@ -298,7 +294,7 @@ export default function LoginPage() {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: resetUsername, code: resetCode, newPassword })
+        body: JSON.stringify({ username: resetUsername, newPassword })
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -431,90 +427,19 @@ export default function LoginPage() {
       return response.json();
     },
     onSuccess: (data: any) => {
-      if (data.requiresVerification) {
-        setVerificationMode(true);
-        setVerificationUsername(data.username);
-        setReceivedCode(data.verificationCode);
-        setVerificationMethodUsed(data.verifiedVia);
-        const targetPhoneOrEmail = data.verifiedVia === "phone" ? data.phone : data.email;
-        setVerificationTarget(targetPhoneOrEmail);
-
-        if (data.verifiedVia === "phone" && data.phone) {
-          setIsFirebaseSendingSMS(true);
-          sendFirebasePhoneOTP(data.phone)
-            .then(({ confirmationResult }) => {
-              setFirebaseConfirmationResult(confirmationResult);
-              toast({
-                title: isRTL ? "تم إرسال رمز Firebase SMS 📲" : "Firebase SMS Sent 📲",
-                description: isRTL 
-                  ? `تم إرسال رمز التحقق مجاناً عبر Firebase SMS إلى ${data.phone}` 
-                  : `OTP sent via Firebase SMS to ${data.phone}`
-              });
-            })
-            .catch((err) => {
-              console.warn("Firebase SMS trigger note:", err);
-              toast({
-                title: isRTL ? "إشعار إرسال الرمز" : "Verification Code Notice",
-                description: err.message || (isRTL ? "يرجى تفقد بريدك الإلكتروني أو رقم هاتفك" : "Please check your email or phone number")
-              });
-            })
-            .finally(() => setIsFirebaseSendingSMS(false));
-        } else {
-          toast({
-            title: isRTL ? "تم إرسال رمز التحقق" : "Verification Code Sent",
-            description: isRTL 
-              ? `يرجى إدخال الرمز المرسل إلى ${data.verifiedVia === "phone" ? "هاتفك" : "بريدك الإلكتروني"}`
-              : `Please enter the code sent to your ${data.verifiedVia === "phone" ? "phone" : "email"}`
-          });
-        }
-      } else {
-        localStorage.setItem('shouma-username', data.username);
-        toast({
-          title: isLogin ? t('loginSuccess') : t('registerSuccess'),
-          description: t('welcomeMessage'),
-        });
-        setLocation("/home");
-      }
+      localStorage.setItem('shouma-username', data.username);
+      toast({
+        title: isLogin ? t('loginSuccess') : t('registerSuccess'),
+        description: t('welcomeMessage'),
+      });
+      setLocation("/home");
     },
     onError: (error: any) => {
-      if (error.isUnverified) {
-        const info = error.data;
-        setVerificationMode(true);
-        setVerificationUsername(info.username);
-        setReceivedCode(info.verificationCode);
-        setVerificationMethodUsed(info.verifiedVia);
-        const targetPhoneOrEmail = info.verifiedVia === "phone" ? info.phone : info.email;
-        setVerificationTarget(targetPhoneOrEmail);
-
-        if (info.verifiedVia === "phone" && info.phone) {
-          setIsFirebaseSendingSMS(true);
-          sendFirebasePhoneOTP(info.phone)
-            .then(({ confirmationResult }) => {
-              setFirebaseConfirmationResult(confirmationResult);
-              toast({
-                title: isRTL ? "تم إرسال رمز Firebase SMS 📲" : "Firebase SMS Sent 📲",
-                description: isRTL ? `تم إرسال رمز التحقق إلى ${info.phone}` : `Code sent to ${info.phone}`
-              });
-            })
-            .catch((err) => {
-              console.warn("Firebase SMS login error note:", err);
-            })
-            .finally(() => setIsFirebaseSendingSMS(false));
-        }
-
-        toast({
-          title: isRTL ? "يرجى التحقق من الحساب" : "Verification Required",
-          description: isRTL 
-            ? `الحساب غير نشط. يرجى إدخال رمز التحقق المرسل.`
-            : `Account is inactive. Please enter the verification code.`
-        });
-      } else {
-        toast({
-          title: t('error'),
-          description: error.message || t('tryAgain'),
-          variant: "destructive",
-        });
-      }
+      toast({
+        title: t('error'),
+        description: error.message || t('tryAgain'),
+        variant: "destructive",
+      });
     },
   });
 
@@ -679,13 +604,10 @@ export default function LoginPage() {
                 <div>
                   <div className="text-center mb-6">
                     <h2 className="text-2xl font-bold text-white tracking-tight">
-                      {isRTL ? "استعادة كلمة السر" : "Forgot Password?"}
+                      {t('forgotPasswordTitle')}
                     </h2>
                     <p className="text-amber-100/70 mt-2 text-sm leading-relaxed">
-                      {isRTL 
-                        ? "أدخل البريد الإلكتروني أو رقم الهاتف أو اسم المستخدم المرتبط بحسابك لإرسال رمز التحقق"
-                        : "Enter your registered email, phone number, or username to receive a verification code"
-                      }
+                      {t('forgotPasswordDesc')}
                     </p>
                   </div>
 
@@ -1105,10 +1027,10 @@ export default function LoginPage() {
 
               {!isLogin && (
                 <div className="space-y-4">
-                  {/* Verification channel selection */}
+                  {/* Contact method selection */}
                   <div className="space-y-2">
                     <Label className="text-sm font-medium text-amber-100/90">
-                      {isRTL ? "طريقة تفعيل الحساب" : "Verification Method"}
+                      {isRTL ? "وسيلة التواصل (البريد أو الهاتف)" : "Contact Method (Email or Phone)"}
                     </Label>
                     <div className="grid grid-cols-2 gap-2 bg-white/5 p-1 rounded-xl border border-white/10">
                       <button
@@ -1123,7 +1045,7 @@ export default function LoginPage() {
                             : "text-white/60 hover:text-white hover:bg-white/5"
                         }`}
                       >
-                        {isRTL ? "البريد الإلكتروني" : "Email"}
+                        {t('emailLabel')}
                       </button>
                       <button
                         type="button"
@@ -1137,7 +1059,7 @@ export default function LoginPage() {
                             : "text-white/60 hover:text-white hover:bg-white/5"
                         }`}
                       >
-                        {isRTL ? "رقم الهاتف" : "Phone Number"}
+                        {t('phoneLabel')}
                       </button>
                     </div>
                   </div>

@@ -251,9 +251,9 @@ export default function HikingPage() {
                         <Translate text={item} />
                       </Badge>
                     ))}
-                    {trip.includes.length > 3 && (
+                    {(trip.includes || []).length > 3 && (
                       <Badge variant="outline" className="text-xs">
-                        +{trip.includes.length - 3}
+                        +{(trip.includes || []).length - 3}
                       </Badge>
                     )}
                   </div>

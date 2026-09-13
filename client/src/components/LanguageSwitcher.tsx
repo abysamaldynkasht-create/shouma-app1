@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Globe, Check } from "lucide-react";
 
-export default function LanguageSwitcher() {
+export function LanguageSwitcher() {
   const { language, setLanguage } = useLanguage();
   const [open, setOpen] = useState(false);
   
@@ -54,3 +54,5 @@ export default function LanguageSwitcher() {
     </DropdownMenu>
   );
 }
+
+export default LanguageSwitcher;
