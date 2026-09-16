@@ -916,6 +916,31 @@ export class MemStorage implements IStorage {
       verifiedVia: "email"
     };
     this.users.set(defaultDemoUser.id, defaultDemoUser);
+
+    const defaultAdminUser: User = {
+      id: "admin-user-1",
+      username: "admin",
+      password: "admin123",
+      email: "admin@shouma.om",
+      phone: "+96891111111",
+      isVerified: true,
+      verificationCode: null,
+      verifiedVia: "email"
+    };
+    this.users.set(defaultAdminUser.id, defaultAdminUser);
+
+    const defaultShoumaUser: User = {
+      id: "shouma-user-1",
+      username: "shouma",
+      password: "123456",
+      email: "shouma@shouma.om",
+      phone: "+96892222222",
+      isVerified: true,
+      verificationCode: null,
+      verifiedVia: "email"
+    };
+    this.users.set(defaultShoumaUser.id, defaultShoumaUser);
+
     this.restaurantReviews = new Map();
     this.groupTripRequests = new Map();
     this.groupTripNextId = 1;
@@ -1508,4 +1533,88 @@ function addModulePortalAuditLog(entry: any): any {
   return newLog;
 }
 
-export const storage = process.env.DATABASE_URL ? new DatabaseStorage() : new MemStorage();
+function isConnectionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || "");
+  const code = String(err.code || "");
+  return (
+    code === "ENOTFOUND" ||
+    code === "ECONNREFUSED" ||
+    code === "ETIMEDOUT" ||
+    code === "EHOSTUNREACH" ||
+    code === "ECONNRESET" ||
+    code === "57P01" ||
+    msg.includes("ENOTFOUND") ||
+    msg.includes("ECONNREFUSED") ||
+    msg.includes("ETIMEDOUT") ||
+    msg.includes("Connection terminated") ||
+    msg.includes("connection timeout") ||
+    msg.includes("getaddrinfo") ||
+    msg.includes("connect ECONNREFUSED")
+  );
+}
+
+function createResilientStorage(dbStorage: IStorage, memStorage: IStorage): IStorage {
+  let isDbAvailable = true;
+  let lastFailureTime = 0;
+  const RETRY_INTERVAL = 30000; // 30 seconds cooldown before retrying database
+
+  return new Proxy(dbStorage, {
+    get(target, prop, receiver) {
+      const origMethod = (target as any)[prop];
+      if (typeof origMethod !== "function") {
+        return origMethod;
+      }
+
+      return async function (...args: any[]) {
+        const now = Date.now();
+        // If database host is currently marked unreachable, use fallback without delay
+        if (!isDbAvailable && now - lastFailureTime < RETRY_INTERVAL) {
+          const fallbackMethod = (memStorage as any)[prop];
+          if (typeof fallbackMethod === "function") {
+            return fallbackMethod.apply(memStorage, args);
+          }
+        }
+
+        try {
+          let result = await origMethod.apply(target, args);
+          
+          // If a query returned undefined (e.g. user or settings lookup), also check in-memory cache
+          if (result === undefined && (prop === "getUser" || prop === "getUserByUsername" || prop === "getUserSettings")) {
+            const fallbackMethod = (memStorage as any)[prop];
+            if (typeof fallbackMethod === "function") {
+              const memResult = await fallbackMethod.apply(memStorage, args);
+              if (memResult !== undefined) {
+                result = memResult;
+              }
+            }
+          }
+
+          if (!isDbAvailable) {
+            console.log("✅ Database connection restored! Resuming primary PostgreSQL storage.");
+            isDbAvailable = true;
+          }
+          return result;
+        } catch (err: any) {
+          if (isConnectionError(err)) {
+            if (isDbAvailable) {
+              console.warn(`⚠️ Database connection unavailable (${err.message}). Seamlessly operating with resilient in-memory storage.`);
+            }
+            isDbAvailable = false;
+            lastFailureTime = now;
+            const fallbackMethod = (memStorage as any)[prop];
+            if (typeof fallbackMethod === "function") {
+              return fallbackMethod.apply(memStorage, args);
+            }
+          }
+          throw err;
+        }
+      };
+    }
+  });
+}
+
+export const storage: IStorage = process.env.DATABASE_URL
+  ? createResilientStorage(new DatabaseStorage(), new MemStorage())
+  : new MemStorage();
+

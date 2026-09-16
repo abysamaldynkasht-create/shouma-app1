@@ -241,6 +241,18 @@ export async function initDatabaseTables() {
     console.log("⚠️ DATABASE_URL is not set. Database verification is skipped, continuing with MemStorage.");
     return;
   }
+  
+  // Verify database reachability with a strict 1500ms timeout before executing migrations
+  try {
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Database connection check timeout")), 1500)
+    );
+    await Promise.race([pool.query("SELECT 1;"), timeoutPromise]);
+  } catch (connErr: any) {
+    console.warn(`⚠️ Database host is currently unreachable or timed out (${connErr?.message || connErr}). Continuing with resilient in-memory storage.`);
+    return;
+  }
+
   console.log("⏳ Running automated shouma-explorer database verification...");
   try {
     // 1. Create or alter db_hotels split payment columns

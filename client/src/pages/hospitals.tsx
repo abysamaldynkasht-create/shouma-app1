@@ -32,11 +32,14 @@ export default function HospitalsPage() {
   const regions = Array.from(new Set(hospitals.map((h) => h.region)));
   const types = ["hospital", "health_center", "clinic", "pharmacy"];
 
-  const filteredHospitals = hospitals.filter((hospital) => {
+  const filteredHospitals = (Array.isArray(hospitals) ? hospitals : []).filter((hospital) => {
+    const hNameAr = hospital.nameAr || "";
+    const hName = hospital.name || "";
+    const hLocation = hospital.location || "";
     const matchesSearch =
-      hospital.nameAr.includes(searchQuery) ||
-      hospital.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      hospital.location.includes(searchQuery);
+      hNameAr.includes(searchQuery) ||
+      hName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      hLocation.includes(searchQuery);
     const matchesRegion = selectedRegion === "all" || hospital.region === selectedRegion;
     const matchesType = selectedType === "all" || hospital.type === selectedType;
     return matchesSearch && matchesRegion && matchesType;
@@ -142,8 +145,13 @@ export default function HospitalsPage() {
             >
               <div className="relative aspect-[4/3] overflow-hidden">
                 <img
-                  src={hospital.image}
-                  alt={hospital.nameAr}
+                  src={hospital.image || "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?q=80&w=800"}
+                  alt={hospital.nameAr || "مستشفى"}
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    target.onerror = null;
+                    target.src = "https://images.unsplash.com/photo-1586773860418-d37222d8fce3?q=80&w=800";
+                  }}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />

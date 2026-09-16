@@ -89,7 +89,7 @@ export default function MyBookingsPage() {
   const isLoading = loadingHotels || loadingHiking || loadingCars;
 
   // Filter Saved Itineraries
-  const filteredItineraries = savedItineraries.filter((it: any) => {
+  const filteredItineraries = (Array.isArray(savedItineraries) ? savedItineraries : []).filter((it: any) => {
     if (!searchQuery) return true;
     const title = it.title || "";
     return title.toLowerCase().includes(searchQuery.toLowerCase());
@@ -100,7 +100,7 @@ export default function MyBookingsPage() {
     let list: any[] = [];
 
     // Add Hotel Bookings
-    hotelBookings.forEach((b: any) => {
+    (Array.isArray(hotelBookings) ? hotelBookings : []).forEach((b: any) => {
       list.push({
         ...b,
         type: "hotel",
@@ -113,7 +113,7 @@ export default function MyBookingsPage() {
     });
 
     // Add Hiking Bookings
-    hikingBookings.forEach((b: any) => {
+    (Array.isArray(hikingBookings) ? hikingBookings : []).forEach((b: any) => {
       list.push({
         ...b,
         type: "hiking",
@@ -126,7 +126,7 @@ export default function MyBookingsPage() {
     });
 
     // Add Car Bookings
-    carBookings.forEach((b: any) => {
+    (Array.isArray(carBookings) ? carBookings : []).forEach((b: any) => {
       list.push({
         ...b,
         type: "car",

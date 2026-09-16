@@ -50,6 +50,20 @@ async function createMissingTables() {
       }
     }
 
+    // 1c. Create restaurant_reviews if not exists
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "restaurant_reviews" (
+        "id" serial PRIMARY KEY NOT NULL,
+        "restaurant_id" integer NOT NULL,
+        "user_name" text NOT NULL,
+        "rating" numeric NOT NULL,
+        "comment" text NOT NULL,
+        "date" text NOT NULL,
+        "created_at" timestamp DEFAULT CURRENT_TIMESTAMP NOT NULL
+      )
+    `);
+    console.log("✅ Table 'restaurant_reviews' is verified/created successfully!");
+
     // Seed restaurant reviews if empty
     const checkReviewsCount = await pool.query(`SELECT COUNT(*) FROM "restaurant_reviews"`);
     if (parseInt(checkReviewsCount.rows[0].count, 10) === 0) {

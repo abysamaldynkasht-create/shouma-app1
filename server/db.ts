@@ -5,8 +5,8 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 
-// Initial load of standard dotenv
-dotenv.config();
+// Initial load of standard dotenv with override so local .env takes precedence
+dotenv.config({ override: true });
 
 // Fallback to load .evn if DATABASE_URL is missing
 if (!process.env.DATABASE_URL) {
@@ -52,6 +52,12 @@ export const pool = new Pool(
 
 // Register an error handler on the idle pool to prevent unhandled 'error' exceptions from crashing the server
 pool.on('error', (err) => {
+  const code = (err as any)?.code || '';
+  const msg = (err as any)?.message || '';
+  if (code === 'ENOTFOUND' || code === 'ECONNREFUSED' || msg.includes('ENOTFOUND')) {
+    // Suppress noisy socket-level events when host is unreachable
+    return;
+  }
   console.error('Unexpected error on idle database client/pool:', err);
 });
 

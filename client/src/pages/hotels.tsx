@@ -92,7 +92,16 @@ export default function HotelsPage() {
       gallery: Array.isArray(item.gallery) ? item.gallery : [],
       reviews: Array.isArray(item.reviews) ? item.reviews : []
     }));
-    return [...hotels, ...formatted];
+
+    const normalizedStatic: Hotel[] = hotels.map(h => ({
+      ...h,
+      gallery: Array.isArray(h.gallery) ? h.gallery : [],
+      reviews: Array.isArray(h.reviews) ? h.reviews : [],
+      amenities: Array.isArray(h.amenities) && h.amenities.length > 0 ? h.amenities : ["واي فاي", "موقف سيارات", "مسبح", "تكييف"],
+      roomOptions: Array.isArray(h.roomOptions) ? h.roomOptions : []
+    }));
+
+    return [...normalizedStatic, ...formatted];
   }, [dbHotels]);
 
   const filteredHotels = useMemo(() => {
@@ -108,8 +117,15 @@ export default function HotelsPage() {
     });
   }, [combinedHotels, searchQuery, selectedRegion]);
 
-  const renderStars = (count: number) => {
-    const validCount = Math.max(0, Math.min(5, Math.floor(Number(count) || 0)));
+  const formatRating = (rating: any) => {
+    const num = Number(rating);
+    if (isNaN(num) || num < 0) return "4.5";
+    return num.toFixed(1);
+  };
+
+  const renderStars = (count: any) => {
+    const num = Number(count);
+    const validCount = (!isNaN(num) && num > 0) ? Math.max(0, Math.min(5, Math.floor(num))) : 5;
     return Array.from({ length: validCount }, (_, i) => (
       <Star key={i} className="w-3 h-3 fill-yellow-400 text-yellow-400" />
     ));
@@ -223,8 +239,13 @@ export default function HotelsPage() {
                 >
                   <div className="relative aspect-[4/3] overflow-hidden">
                     <img
-                      src={hotel.image}
-                      alt={hotel.nameAr}
+                      src={hotel.image || sixSensesHeroImg}
+                      alt={hotel.nameAr || "فندق"}
+                      onError={(e) => {
+                        const target = e.currentTarget as HTMLImageElement;
+                        target.onerror = null;
+                        target.src = sixSensesHeroImg;
+                      }}
                       className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                     />
                     <div className={`absolute top-3 flex gap-0.5 ${isRTL ? 'right-3' : 'left-3'}`}>
@@ -232,7 +253,7 @@ export default function HotelsPage() {
                     </div>
                     <div className={`absolute top-3 flex items-center gap-1 bg-black/60 text-white px-2 py-1 rounded-full text-sm ${isRTL ? 'left-3' : 'right-3'}`}>
                       <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-                      <span>{hotel.rating}</span>
+                      <span>{formatRating(hotel.rating)}</span>
                     </div>
                   </div>
                   <CardContent className="p-4">

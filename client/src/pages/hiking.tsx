@@ -93,10 +93,13 @@ export default function HikingPage() {
   const difficulties = ["easy", "moderate", "hard", "expert"];
 
   const filteredTrips = combinedTrips.filter((trip) => {
+    const tripNameAr = trip.nameAr || "";
+    const tripName = trip.name || "";
+    const tripLocation = trip.location || "";
     const matchesSearch =
-      trip.nameAr.includes(searchQuery) ||
-      trip.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      trip.location.includes(searchQuery);
+      tripNameAr.includes(searchQuery) ||
+      tripName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tripLocation.includes(searchQuery);
     const matchesRegion = selectedRegion === "all" || trip.region === selectedRegion;
     const matchesDifficulty = selectedDifficulty === "all" || trip.difficulty === selectedDifficulty;
     return matchesSearch && matchesRegion && matchesDifficulty;
@@ -202,8 +205,13 @@ export default function HikingPage() {
             >
               <div className="relative aspect-[4/3] overflow-hidden">
                 <img
-                  src={trip.image}
-                  alt={trip.nameAr}
+                  src={trip.image || "https://images.unsplash.com/photo-1551632811-561732d1e306?q=80&w=800"}
+                  alt={trip.nameAr || "رحلة"}
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    target.onerror = null;
+                    target.src = "https://images.unsplash.com/photo-1551632811-561732d1e306?q=80&w=800";
+                  }}
                   className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />

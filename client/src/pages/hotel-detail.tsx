@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
 import { hotels } from "@/lib/hotels";
+import sixSensesHeroImg from "@/assets/six-senses-hotel.png";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -155,8 +156,15 @@ export default function HotelDetailPage() {
     }
   }, [hotel]);
 
-  const renderStars = (count: number) => {
-    const validCount = Math.max(0, Math.min(5, Math.floor(Number(count) || 0)));
+  const formatRating = (rating: any) => {
+    const num = Number(rating);
+    if (isNaN(num) || num < 0) return "4.5";
+    return num.toFixed(1);
+  };
+
+  const renderStars = (count: any) => {
+    const num = Number(count);
+    const validCount = (!isNaN(num) && num > 0) ? Math.max(0, Math.min(5, Math.floor(num))) : 5;
     return Array.from({ length: validCount }, (_, i) => (
       <Star key={i} className="w-4 h-4 fill-yellow-400 text-yellow-400" />
     ));
@@ -234,8 +242,13 @@ export default function HotelDetailPage() {
 
       <section className="relative h-[50vh] overflow-hidden">
         <img
-          src={activeImage || hotel.image}
-          alt={hotel.nameAr}
+          src={activeImage || hotel.image || sixSensesHeroImg}
+          alt={hotel.nameAr || "فندق"}
+          onError={(e) => {
+            const target = e.currentTarget as HTMLImageElement;
+            target.onerror = null;
+            target.src = sixSensesHeroImg;
+          }}
           className="w-full h-full object-cover transition-all duration-300"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
@@ -257,7 +270,7 @@ export default function HotelDetailPage() {
               </div>
               <div className="flex items-center gap-1">
                 <Star className="w-5 h-5 fill-yellow-400 text-yellow-400" />
-                <span className="font-semibold">{hotel.rating}</span>
+                <span className="font-semibold">{formatRating(hotel.rating)}</span>
               </div>
             </div>
           </div>
@@ -277,7 +290,16 @@ export default function HotelDetailPage() {
                   activeImage === imgUrl ? 'border-amber-500 scale-105 shadow-md shadow-amber-500/20' : 'border-slate-700 opacity-60 hover:opacity-100'
                 }`}
               >
-                <img src={imgUrl} alt="📸" className="w-full h-full object-cover" />
+                <img
+                  src={imgUrl || sixSensesHeroImg}
+                  alt="📸"
+                  onError={(e) => {
+                    const target = e.currentTarget as HTMLImageElement;
+                    target.onerror = null;
+                    target.src = sixSensesHeroImg;
+                  }}
+                  className="w-full h-full object-cover"
+                />
               </button>
             ))}
           </div>
@@ -333,8 +355,13 @@ export default function HotelDetailPage() {
                         {room.image && (
                           <div className="md:w-1/3 aspect-video md:aspect-auto">
                             <img 
-                              src={room.image} 
-                              alt={room.nameAr} 
+                              src={room.image || sixSensesHeroImg} 
+                              alt={room.nameAr || "غرفة"} 
+                              onError={(e) => {
+                                const target = e.currentTarget as HTMLImageElement;
+                                target.onerror = null;
+                                target.src = sixSensesHeroImg;
+                              }}
                               className="w-full h-full object-cover"
                             />
                           </div>
@@ -402,7 +429,16 @@ export default function HotelDetailPage() {
                 <div className="grid grid-cols-2 gap-4">
                   {hotel.gallery.map((img: string, index: number) => (
                     <div key={index} className="aspect-video rounded-xl overflow-hidden">
-                      <img src={img} alt={`${hotel.nameAr} ${index + 1}`} className="w-full h-full object-cover" />
+                      <img
+                        src={img || sixSensesHeroImg}
+                        alt={`${hotel.nameAr || "فندق"} ${index + 1}`}
+                        onError={(e) => {
+                          const target = e.currentTarget as HTMLImageElement;
+                          target.onerror = null;
+                          target.src = sixSensesHeroImg;
+                        }}
+                        className="w-full h-full object-cover"
+                      />
                     </div>
                   ))}
                 </div>

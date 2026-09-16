@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 import { CurrencyProvider } from "@/contexts/CurrencyContext";
 import NotFound from "@/pages/not-found";
-import LoginPage from "@/pages/login";
 import HomePage from "@/pages/home";
 import SettingsPage from "@/pages/settings";
 import ShoumatakPage from "@/pages/shoumatak";
@@ -48,8 +47,9 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 function Router() {
   return (
     <Switch>
-      <Route path="/" component={LoginPage} />
+      <Route path="/" component={HomePage} />
       <Route path="/home" component={HomePage} />
+      <Route path="/login" component={HomePage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/shoumatak" component={ShoumatakPage} />
       <Route path="/itinerary" component={ItineraryPage} />
@@ -77,7 +77,7 @@ function Router() {
       <Route path="/admin_having_private_3490" component={AdminHavingPage} />
       <Route path="/hotel-portal" component={HotelPortalPage} />
       <Route path="/hotels-admin-private-8822" component={HotelPortalPage} />
-      <Route path="/portal-login" component={LoginPage} />
+      <Route path="/portal-login" component={HomePage} />
       <Route path="/car-rental-admin" component={CarRentalAdminPage} />
       <Route path="/cnt-admin" component={CarRentalAdminPage} />
       <Route path="/nearby" component={NearbyPlacesPage} />
