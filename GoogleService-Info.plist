@@ -1,77 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key>
+	<string>AIzaSyABsL-JXSBUQsTGfh-8exXwT6PFeEn-ZrY</string>
+	<key>GCM_SENDER_ID</key>
+	<string>403911213872</string>
+	<key>PLIST_VERSION</key>
+	<string>1</string>
+	<key>BUNDLE_ID</key>
+	<string>om.shouma.explorer</string>
+	<key>PROJECT_ID</key>
+	<string>shouma-d59ae</string>
+	<key>STORAGE_BUCKET</key>
+	<string>shouma-d59ae.firebasestorage.app</string>
+	<key>IS_ADS_ENABLED</key>
+	<false></false>
+	<key>IS_ANALYTICS_ENABLED</key>
+	<false></false>
+	<key>IS_APPINVITE_ENABLED</key>
+	<true></true>
+	<key>IS_GCM_ENABLED</key>
+	<true></true>
+	<key>IS_SIGNIN_ENABLED</key>
+	<true></true>
+	<key>GOOGLE_APP_ID</key>
+	<string>1:403911213872:ios:224c5cfc1eaf3e7c0bfef5</string>
+</dict>
+</plist>
 <div align="center">
 
-<img width="1200" height="475" alt="Akasha AI" src="https://i.imgur.com/5gCbPh1.jpeg" />
-
-# Akasha AI
-
-### Smart AI built by the next generation.
-
-**Developed & Powered by Akasha AI**
-
-</div>
-
----
-
-## About
-
-This application is proudly developed by **Akasha AI**, an artificial intelligence and software company focused on building innovative AI-powered products and next-generation digital solutions.
-
-**Akasha AI** is the creator, developer, and technology provider behind this application.
-
----
-
-## Run Locally
-
-### Prerequisites
-
-* Node.js
-* npm
-* Gemini API Key
-
-### 1. Install dependencies
-
-```bash
-npm install
-```
-
-### 2. Configure the API Key
-
-Create or edit `.env.local` and add your Gemini API key:
-
-```env
-GEMINI_API_KEY=your_gemini_api_key
-```
-
-### 3. Run the application
-
-```bash
-npm run dev
-```
-
----
-
-## Development
-
-This application was developed using **Google AI Studio** as part of the development workflow.
-
-Google AI Studio is used as a development environment and does not represent the owner, creator, or developer of this application.
-
-### Application Owner & Developer
-
-**Akasha AI**
-
-> Smart AI built by the next generation.
-
----
-
-## Copyright
-
-© 2026 **Akasha AI**. All rights reserved.
-
-This application, its source code, design, branding, and associated intellectual property are owned by **Akasha AI**, unless otherwise stated.
-
-<div align="center">
-
-**Built with ❤️ by Akasha AI**
 
 </div>
